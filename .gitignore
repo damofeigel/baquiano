@@ -1,0 +1,29 @@
+# ==============================================
+# Python
+# ==============================================
+__pycache__/
+.Python
+build/
+
+.venv/
+
+.env
+.env.local
+
+.pytest_cache/
+
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+.playwright/
+
+
+.scrapy/
+.vscode/
+
+# Operating System
+.DS_Store
+.DS_Store?
+._*
+

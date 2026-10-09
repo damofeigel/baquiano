@@ -1,0 +1,8 @@
+openai>=1.0
+pydantic>=2.0
+playwright>=1.50
+scrapy>=2.13
+python-dotenv>=1.0.0
+openai-agents
+beautifulsoup4>=4.12
+pytest
