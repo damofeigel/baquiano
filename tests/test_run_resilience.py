@@ -6,6 +6,7 @@ These use the real Agents SDK types but never launch Chromium or call a model.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -73,7 +74,7 @@ def test_placeholder_strings_become_null():
 # --- Partial results on failure ----------------------------------------------
 
 def test_run_keeps_recorded_companies_when_turn_limit_is_hit(monkeypatch, tmp_path):
-    monkeypatch.setattr(agent_module.config, "OUTPUT_FILE", tmp_path / "out.json")
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
     portfolio_agent = agent_module.PortfolioAgent()
 
     async def fake_run(agent, prompt, **kwargs):
@@ -90,11 +91,12 @@ def test_run_keeps_recorded_companies_when_turn_limit_is_hit(monkeypatch, tmp_pa
     assert result.fund_name == "Fund X"
     assert [s.name for s in result.startups] == ["Acme"]
     assert any("turn limit" in e for e in result.errors)
-    assert (tmp_path / "out.json").exists()
+    [written] = tmp_path.glob("fund.example_*.json")
+    assert json.loads(written.read_text())["startups"][0]["name"] == "Acme"
 
 
 def test_run_reraises_when_nothing_was_recorded(monkeypatch, tmp_path):
-    monkeypatch.setattr(agent_module.config, "OUTPUT_FILE", tmp_path / "out.json")
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
     portfolio_agent = agent_module.PortfolioAgent()
 
     async def fake_run(agent, prompt, **kwargs):
@@ -159,3 +161,27 @@ def test_long_content_is_truncated_before_links():
     assert len(page.plain_text) <= cfg.max_text_chars
     assert "https://startup9.example" in page.plain_text
     assert "[truncated for length]" in page.plain_text
+
+
+# --- Output files -------------------------------------------------------------
+
+def test_each_run_writes_its_own_file(tmp_path):
+    from src.custom_agents.portfolio_agent.models import FinderResult
+    from src.custom_agents.portfolio_agent.output import write_result
+
+    first = FinderResult(source_url="https://fund.example", fund_name="A", startups=[])
+    second = FinderResult(source_url="https://fund.example", fund_name="B", startups=[])
+    paths = [write_result(r, "https://www.fund.example/portfolio", tmp_path) for r in (first, second)]
+
+    assert paths[0] != paths[1]  # same fund, same second: no overwrite
+    assert paths[0].name.startswith("fund.example_")
+    assert [json.loads(p.read_text())["fund_name"] for p in paths] == ["A", "B"]
+
+
+def test_fund_slug_is_filesystem_safe():
+    from src.custom_agents.portfolio_agent.output import fund_slug
+
+    assert fund_slug("https://www.gridexponential.com/portfolio") == "gridexponential.com"
+    assert fund_slug("gridexponential.com") == "gridexponential.com"
+    assert fund_slug("http://user@Fund.Example:8080/x?y=1") == "fund.example"
+    assert fund_slug("not a url") == "not-a-url"

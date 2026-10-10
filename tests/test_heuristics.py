@@ -137,7 +137,7 @@ def test_worker_prompt_lists_prepass_companies():
 
 
 def test_deterministic_mode_skips_the_llm(monkeypatch, tmp_path):
-    monkeypatch.setattr(agent_module.config, "OUTPUT_FILE", tmp_path / "out.json")
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
 
     async def fake_prepass(browser_tools, url):
         return PrepassResult(

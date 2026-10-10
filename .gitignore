@@ -20,6 +20,9 @@ playwright/.cache/
 
 
 .scrapy/
+
+# Pipeline results
+output/
 .vscode/
 
 # Operating System

@@ -24,8 +24,11 @@ PORTFOLIO_MODE: str = os.getenv("PORTFOLIO_MODE", "hybrid").strip().lower()
 
 # I/O
 PAGES_FILE: Path = ROOT / os.getenv("PAGES_FILE", "pages.json")
-OUTPUT_FILE: Path = ROOT / os.getenv("OUTPUT_FILE", "output/startups.json")
-OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+# Each run writes its own file here: <fund-domain>_<timestamp>.json.
+# Falls back to the folder of the older OUTPUT_FILE setting if only that is set.
+OUTPUT_DIR: Path = PROJECT_ROOT / os.getenv(
+    "OUTPUT_DIR", str(Path(os.getenv("OUTPUT_FILE", "output/startups.json")).parent)
+)
 
 # Playwright
 PLAYWRIGHT_BROWSER_TYPE: str = os.getenv("PLAYWRIGHT_BROWSER_TYPE", "chromium")

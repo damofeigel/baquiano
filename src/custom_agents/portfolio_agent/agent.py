@@ -21,6 +21,7 @@ from src.core.llm import OneToolCallPerTurn, get_client, get_model
 from .context import worker_run_config
 from .instructions import FINDER_AGENT_INSTRUCTIONS
 from .models import FinderResult
+from .output import write_result
 from .prepass import PrepassResult, run_prepass
 from .recorder import PortfolioRecorder, looks_like_broken_tool_call, salvage_companies
 from .tools import BrowserTools
@@ -59,16 +60,17 @@ def build_worker_prompt(url: str, prepass: PrepassResult | None) -> str:
         names = names[:MAX_PROMPT_NAMES_CHARS].rsplit(", ", 1)[0] + ", ..."
     return f"""{task}
 
-An automatic parser already found the portfolio at {prepass.portfolio_url}
-and recorded {len(prepass.companies)} companies: {names}
+        An automatic parser already found the portfolio at {prepass.portfolio_url}
+        and recorded {len(prepass.companies)} companies: {names}
 
-Your job:
-1. Identify the fund and call record_fund.
-2. Check for companies the parser missed: other tabs, categories,
-   pagination or "load more" content. Record only the missing ones.
-3. If a recorded entry is clearly not a portfolio company (a team member,
-   partner, LP or news item), remove it with remove_companies.
-4. Do not record the listed companies again. Call finish when done."""
+        Your job:
+        1. Identify the fund and call record_fund.
+        2. Check for companies the parser missed: other tabs, categories,
+        pagination or "load more" content. Record only the missing ones.
+        3. If a recorded entry is clearly not a portfolio company (a team member,
+        partner, LP or news item), remove it with remove_companies.
+        4. Do not record the listed companies again. Call finish when done.
+    """
 
 
 class PortfolioAgent:
@@ -186,7 +188,7 @@ class PortfolioAgent:
             logger.debug("Worker final message:\n%s", text)
             if self.recorder.finished or not looks_like_broken_tool_call(text):
                 return
-
+            # Check evidence
             salvaged, _ = self.recorder.check_evidence(salvage_companies(text))
             saved, _ = self.recorder.add_companies(salvaged)
             turns_left -= len(result.raw_responses)
@@ -213,10 +215,8 @@ class PortfolioAgent:
             output.fund_name, len(output.startups), len(output.errors),
         )
         try:
-            config.OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(config.OUTPUT_FILE, "w", encoding="utf-8") as f:
-                f.write(output.model_dump_json(indent=2))
-            logger.info("Output written to %s", config.OUTPUT_FILE)
+            path = write_result(output, url)
+            logger.info("Output written to %s", path)
         except Exception:
             logger.error("Failed to write output file", exc_info=True)
 

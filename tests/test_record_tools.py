@@ -196,7 +196,7 @@ def _agent_with_model(monkeypatch, model, page_text=None):
 
 def test_parallel_plan_with_invented_companies_saves_nothing(monkeypatch, tmp_path):
     """Replays the real failure: one response holding the whole plan, before any page."""
-    monkeypatch.setattr(agent_module.config, "OUTPUT_FILE", tmp_path / "out.json")
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
     plan = [
         ("navigate_to_url", {"url": "https://www.gridexponential.com"}),
         ("record_companies", {"companies": [{"name": f"Company {i}"} for i in range(1, 5)]}),
@@ -224,7 +224,7 @@ def test_parallel_plan_with_invented_companies_saves_nothing(monkeypatch, tmp_pa
 
 
 def test_only_companies_seen_on_a_page_are_recorded(monkeypatch, tmp_path):
-    monkeypatch.setattr(agent_module.config, "OUTPUT_FILE", tmp_path / "out.json")
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
     model = ScriptedModel([
         ("record_fund", {"fund_name": "GRIDX"}),
         ("record_companies", {"companies": [
@@ -249,7 +249,7 @@ def test_only_companies_seen_on_a_page_are_recorded(monkeypatch, tmp_path):
 
 
 def test_agent_recovers_from_a_cut_off_tool_call(monkeypatch, tmp_path):
-    monkeypatch.setattr(agent_module.config, "OUTPUT_FILE", tmp_path / "out.json")
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
     model = ScriptedModel([
         ("record_fund", {"fund_name": "GRIDX"}),
         TRUNCATED_CALL,                                    # vLLM hands this back as text
