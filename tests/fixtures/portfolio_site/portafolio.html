@@ -1,0 +1,14 @@
+<html><head><meta charset="utf-8"><title>Portafolio | Fondo Andino</title></head><body>
+<nav><a href="/">Inicio</a></nav><h1>Nuestro portafolio</h1>
+<div class="grid" id="grid"></div>
+<button id="more">Ver más</button>
+<a class="next" href="/portafolio2.html">Siguiente</a>
+<script>
+const all = ["Andes Bio","Patagonia Quantum","Litio Tech","Robotica Sur","Pampa AI","Nano Cuyo","Aconcagua Space","Fueguina Energy"];
+let shown = 0;
+function add(n){ const g=document.getElementById('grid');
+  for(const name of all.slice(shown, shown+n)){ const d=document.createElement('div'); d.className='card';
+    d.innerHTML=`<img alt="${name} logo"><h3>${name}</h3><a href="https://${name.toLowerCase().replace(/ /g,'')}.com">Web</a>`; g.appendChild(d);}
+  shown+=n; if(shown>=all.length) document.getElementById('more').remove(); }
+add(4); document.getElementById('more').onclick=()=>add(2);
+</script></body></html>

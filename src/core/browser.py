@@ -1,6 +1,7 @@
 # Page extraction tool for the portfolio agent
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
@@ -51,6 +52,11 @@ class BrowserConfig:
         }
 
 browser_config = BrowserConfig()
+
+# Text of buttons that reveal more items in a listing (English and Spanish)
+LOAD_MORE_RE = re.compile(
+    r"\b(load|show|see|view)\s+more\b|\b(ver|cargar|mostrar)\s+m[aá]s\b", re.I
+)
 
 
 # Core extraction helper
@@ -172,7 +178,8 @@ def extract_page_content(
         header_parts.append(f"# {title}")
     if headings:
         header_parts.append("## Headings\n" + "\n".join(f"- {h}" for h in headings))
-    header = _fit("\n\n".join(header_parts), budget // 4)
+    # Headings often hold the company names on portfolio pages
+    header = _fit("\n\n".join(header_parts), budget // 3)
 
     links_block = ""
     if links:
@@ -392,3 +399,48 @@ class BrowserManager:
                 break
 
         return {"clicks": clicks, "stopped_reason": stopped_reason}
+
+    def expand_listing(
+        self,
+        page: Page | None = None,
+        max_scrolls: int = 10,
+        max_clicks: int = 5,
+        pause_ms: int = 800,
+    ) -> dict[str, Any]:
+        """Scroll until the page stops growing, then click 'load more' buttons.
+
+        Only <button>/role=button elements are clicked: "Ver más" links on
+        individual cards usually open a company profile instead.
+        """
+        target_page = page or self.page
+        height = "() => document.body ? document.body.scrollHeight : 0"
+
+        def scroll_to_end() -> int:
+            done = 0
+            for _ in range(max_scrolls):
+                before = target_page.evaluate(height)
+                target_page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+                target_page.wait_for_timeout(pause_ms)
+                done += 1
+                if target_page.evaluate(height) == before:
+                    break
+            return done
+
+        scrolls = scroll_to_end()
+        clicks = 0
+        start_url = target_page.url
+        for _ in range(max_clicks):
+            button = target_page.get_by_role("button", name=LOAD_MORE_RE).first
+            try:
+                if button.count() == 0 or not button.is_visible():
+                    break
+                button.click(timeout=3_000)
+            except Exception:
+                break
+            target_page.wait_for_timeout(pause_ms)
+            if target_page.url != start_url:
+                target_page.go_back(timeout=self.config.timeout_ms)
+                break
+            clicks += 1
+            scrolls += scroll_to_end()
+        return {"scrolls": scrolls, "clicks": clicks}

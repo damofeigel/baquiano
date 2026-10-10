@@ -16,6 +16,12 @@ LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
 LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 API_KEY: str = os.getenv("API_KEY", "not-needed")
 
+# Portfolio extraction mode:
+#   hybrid        deterministic pre-pass, then the agent fills gaps (default)
+#   deterministic pre-pass only, no LLM calls
+#   agent         agent only, no pre-pass
+PORTFOLIO_MODE: str = os.getenv("PORTFOLIO_MODE", "hybrid").strip().lower()
+
 # I/O
 PAGES_FILE: Path = ROOT / os.getenv("PAGES_FILE", "pages.json")
 OUTPUT_FILE: Path = ROOT / os.getenv("OUTPUT_FILE", "output/startups.json")

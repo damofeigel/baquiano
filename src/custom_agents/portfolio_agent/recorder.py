@@ -12,11 +12,82 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from agents import function_tool
+from agents import FunctionTool, function_tool
+from pydantic import ValidationError
 
 from .models import FinderResult, StartupInfo
 
 logger = logging.getLogger(__name__)
+
+
+# Flat, inline schema: small models fill this in far more reliably than the
+# $defs/$ref/anyOf schema Pydantic generates for list[StartupInfo].
+_COMPANY_FIELDS = {
+    "name": "Company name as shown on the page",
+    "website": "Company's own website URL, if linked",
+    "description": "One sentence on what the company does",
+    "sector": "e.g. biotechnology, AI, agtech, energy",
+    "country": "Only if explicitly stated",
+}
+RECORD_COMPANIES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "companies": {
+            "type": "array",
+            "description": "Companies from the current page, at most 25 per call",
+            "items": {
+                "type": "object",
+                "properties": {
+                    field: {"type": "string", "description": desc}
+                    for field, desc in _COMPANY_FIELDS.items()
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    "required": ["companies"],
+}
+
+# report_error messages that are really the model saying it has finished
+_NOT_ERRORS = {"done", "finished", "complete", "completed", "none", "no errors", "ok", "n/a"}
+
+
+def parse_companies_args(raw: str) -> tuple[list[StartupInfo], list[str]]:
+    """Leniently parse record_companies arguments. Returns (companies, problems).
+
+    Accepts {"companies": [...]}, a bare list, a single company object,
+    companies given as a JSON string, and plain-string items (taken as names).
+    """
+    try:
+        data: Any = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as exc:
+        return [], [f"Arguments are not valid JSON: {exc}"]
+
+    if isinstance(data, dict):
+        data = data.get("companies", data if "name" in data else [])
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            data = [data]
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list):
+        return [], ["'companies' must be a list of objects with at least a 'name'."]
+
+    companies: list[StartupInfo] = []
+    problems: list[str] = []
+    for i, item in enumerate(data):
+        if isinstance(item, str):
+            item = {"name": item}
+        if not isinstance(item, dict):
+            problems.append(f"Item {i} is not an object.")
+            continue
+        try:
+            companies.append(StartupInfo.model_validate(item))
+        except ValidationError as exc:
+            problems.append(f"Item {i} ({item.get('name', '?')}): {exc.errors()[0]['msg']}")
+    return companies, problems
 
 
 def _dedupe_key(name: str) -> str:
@@ -39,6 +110,7 @@ class PortfolioRecorder:
 
     def reset(self) -> None:
         self.fund_name: str | None = None
+        self.fund_name_hint: str | None = None  # used when the agent never calls record_fund
         self.source_url: str | None = None
         self.errors: list[str] = []
         self._companies: dict[str, StartupInfo] = {}
@@ -85,18 +157,30 @@ class PortfolioRecorder:
                     return existing_key
         return None
 
+    def remove_companies(self, names: list[str]) -> list[str]:
+        """Remove companies by name. Returns the names that were removed."""
+        removed = []
+        for name in names:
+            company = self._companies.pop(_dedupe_key(name), None)
+            if company is not None:
+                removed.append(company.name)
+        return removed
+
     def add_error(self, message: str) -> None:
         message = message.strip()
+        if message.lower().strip(" .!") in _NOT_ERRORS:
+            return
         if message and message not in self.errors:
             self.errors.append(message)
 
     def build_result(self, fallback_url: str) -> FinderResult:
         errors = list(self.errors)
-        if not self.fund_name:
+        fund_name = self.fund_name or self.fund_name_hint
+        if not fund_name:
             errors.append("Fund name was not identified.")
         return FinderResult(
             source_url=self.source_url or fallback_url,
-            fund_name=self.fund_name or "Unknown",
+            fund_name=fund_name or "Unknown",
             startups=[c.model_copy() for c in self.companies],
             errors=errors,
         )
@@ -109,22 +193,52 @@ class PortfolioRecorder:
             logger.info("Recorded fund: %s (%s)", self.fund_name, self.source_url)
             return json.dumps({"ok": True, "fund_name": self.fund_name})
 
-        @function_tool(strict_mode=False)
-        def record_companies(companies: list[StartupInfo]) -> str:
-            """Save portfolio companies found on the page you just read.
-
-            Call this right after reading each portfolio page, before navigating
-            elsewhere. Calling it again with the same company merges new details.
-            """
+        async def _record_companies(ctx: Any, raw_args: str) -> str:
+            companies, problems = parse_companies_args(raw_args)
             added, merged = self.add_companies(companies)
             logger.info(
-                "Recorded companies: %d new, %d merged, %d total",
-                added, merged, len(self._companies),
+                "Recorded companies: %d new, %d merged, %d total, %d problem(s)",
+                added, merged, len(self._companies), len(problems),
             )
+            if problems:
+                logger.warning("record_companies problems: %s | raw args: %.500s", problems, raw_args)
             return json.dumps({
-                "ok": True,
+                "ok": not problems,
                 "new": added,
                 "merged": merged,
+                "total_recorded": len(self._companies),
+                **({"problems": problems} if problems else {}),
+            }, ensure_ascii=False)
+
+        record_companies = FunctionTool(
+            name="record_companies",
+            description=(
+                "Save portfolio companies found on the page you just read. Call it "
+                "right after reading each portfolio page, with at most 25 companies "
+                "per call; call it again for the rest. Repeating a company merges "
+                "new details."
+            ),
+            params_json_schema=RECORD_COMPANIES_SCHEMA,
+            on_invoke_tool=_record_companies,
+            strict_json_schema=False,
+        )
+
+        @function_tool(strict_mode=False)
+        def remove_companies(names: list[str], reason: str) -> str:
+            """Remove recorded entries that are not portfolio companies.
+
+            Use only for entries that are clearly wrong, e.g. team members,
+            partners, LPs or news items.
+            """
+            removed = self.remove_companies(names)
+            logger.warning("Removed companies %s — reason: %s", removed, reason)
+            return json.dumps({
+                "ok": True,
+                "removed": removed,
+                "not_found": [
+                    n for n in names
+                    if _dedupe_key(n) not in {_dedupe_key(r) for r in removed}
+                ],
                 "total_recorded": len(self._companies),
             })
 
@@ -134,4 +248,10 @@ class PortfolioRecorder:
             self.add_error(message)
             return json.dumps({"ok": True})
 
-        return [record_fund, record_companies, report_error]
+        @function_tool(strict_mode=False)
+        def finish(summary: str = "") -> str:
+            """Call when the portfolio listing is complete. Ends the run."""
+            logger.info("Agent finished: %s", summary)
+            return "finished"
+
+        return [record_fund, record_companies, remove_companies, report_error, finish]

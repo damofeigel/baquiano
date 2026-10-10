@@ -16,13 +16,15 @@ import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Callable, TypeVar
 from agents import function_tool
 
 from src.core.browser import BrowserManager
 from src.core.config import MAX_HTML_CHARS
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 class BrowserTools:
     """Browser-only tools; Playwright is confined to one dedicated thread."""
@@ -108,6 +110,17 @@ class BrowserTools:
             self._executor,
             lambda: self._invoke_sync(method, *args, **kwargs),
         )
+
+    async def run_with_browser(self, fn: Callable[[BrowserManager], T]) -> T:
+        """Run fn(browser) on the Playwright thread and return its raw result.
+
+        Used by non-agent code (the deterministic pre-pass) so it shares the
+        agent's browser and leaves it on the page it finished on.
+        """
+        if self._closed:
+            raise RuntimeError("BrowserTools is closed.")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, lambda: fn(self._get_browser()))
 
     def _build_tools(self) -> list[Any]:
         @function_tool(strict_mode=False)

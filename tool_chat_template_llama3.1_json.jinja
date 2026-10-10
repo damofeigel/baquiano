@@ -82,10 +82,16 @@
         {%- if message.tool_calls %}
             {%- for tool_call in message.tool_calls %}
                 {%- if tool_call.function is defined %}
-                    {{- '{"name": "' + tool_call.function.name + '", "parameters": ' + tool_call.function.arguments + '}' }}
-                {%- else %}
-                    {{- '{"name": "' + tool_call.name + '", "parameters": ' + tool_call.arguments + '}' }}
+                    {%- set tool_call = tool_call.function %}
                 {%- endif %}
+                {#- vLLM may pass arguments as a parsed dict rather than a JSON string #}
+                {%- set arguments = tool_call.arguments %}
+                {%- if arguments is not string %}
+                    {%- set arguments = arguments | tojson %}
+                {%- endif %}
+                {{- '{"name": "' + tool_call.name + '", "parameters": ' }}
+                {{- arguments }}
+                {{- '}' }}
                 {%- if not loop.last %}
                     {{- "\n" }}
                 {%- endif %}

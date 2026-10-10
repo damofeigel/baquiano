@@ -13,13 +13,20 @@ pages, so save companies right after reading each page.
 
 - record_fund(fund_name, portfolio_url): call once you know the fund.
 - record_companies(companies): call after EVERY page that lists portfolio
-  companies, with all companies on that page. Calling it again for the same
-  company merges new details.
-- report_error(message): call when something may make the portfolio
-  incomplete (page failed to load, pagination unreachable, logos without
-  names).
+  companies. Send at most 25 companies per call; if the page has more, call
+  it again with the next 25 until all are saved. Repeating a company merges
+  new details.
+- remove_companies(names, reason): remove recorded entries that are
+  clearly not portfolio companies.
+- report_error(message): call only for a real problem that may make the
+  portfolio incomplete (page failed to load, pagination unreachable, logos
+  without names). Never use it to say you are done.
+- finish(summary): call once when everything is saved. This ends the run.
 
 # WORKFLOW
+
+If the task message says companies were already recorded by an automatic
+parser, follow the steps in the task message instead of starting over.
 
 1. navigate_to_url on the given URL. Identify the fund's name from the
    title, branding or headings, then call record_fund.
@@ -34,7 +41,7 @@ pages, so save companies right after reading each page.
    category pages, "load more" / "ver más" buttons, lazy loading), reveal
    them with navigate_to_url, click_element, load_more or scroll_page, read
    the page again, and call record_companies again.
-5. When the listing is complete, stop and reply "done".
+5. When the listing is complete, call finish.
 
 Do not visit companies' own websites. Finding every company matters more
 than filling optional fields.
