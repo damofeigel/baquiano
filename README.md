@@ -392,11 +392,3 @@ Check the reason in the summary. Common causes: the portfolio is private (behind
 Set `LOG_LEVEL=INFO` (or `DEBUG`) in `.env`.
 
 ---
-
-## Known limitations
-
-- **Only fund portfolios for now.** There's no enrichment step yet (visiting each company's own site for country and founding year), and no deep tech or Argentina classification; `country` is mostly null.
-- **The pre-pass needs a card grid.** Plain text lists, tables, and tabs that load separately fall back to the agent in `hybrid` mode.
-- **Page text skips non-heading `<div>` text** that isn't in a link, which can hide company names on some layouts.
-- **No URL restrictions:** the browser will open `file://` and local network addresses. Only run it on targets you trust.
-- **Agent mode is limited by the model.** An 8B model is reliable at narrow tasks (hybrid gap-checking) but weak at open-ended browsing. A larger model improves `agent` mode considerably.
