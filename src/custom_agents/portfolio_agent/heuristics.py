@@ -63,7 +63,7 @@ def _same_site(a: str, b: str) -> bool:
     return bool(ha) and (ha == hb or ha.endswith("." + hb) or hb.endswith("." + ha))
 
 
-def _is_social(url: str) -> bool:
+def is_social_url(url: str) -> bool:
     host = _host(url)
     return any(host == d or host.endswith("." + d) for d in SOCIAL_DOMAINS)
 
@@ -72,7 +72,7 @@ def _is_external_company_link(href: str, base_url: str) -> bool:
     return (
         href.startswith(("http://", "https://"))
         and not _same_site(href, base_url)
-        and not _is_social(href)
+        and not is_social_url(href)
     )
 
 

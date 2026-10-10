@@ -18,6 +18,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, TypeVar
+from urllib.parse import urlparse
 from agents import function_tool
 
 from src.core.browser import BrowserManager
@@ -36,6 +37,13 @@ def _normalize(text: str) -> str:
     return re.sub(r"[\W_]+", "", text.lower())
 
 
+def url_key(url: str) -> str:
+    """Comparable form of a URL: no scheme, "www.", trailing slash or #fragment."""
+    parts = urlparse(url if "://" in url else f"https://{url}")
+    key = parts.netloc.lower().removeprefix("www.") + parts.path.rstrip("/")
+    return f"{key}?{parts.query}" if parts.query else key
+
+
 class Evidence:
     """Text the browser has actually returned during this run.
 
@@ -52,10 +60,14 @@ class Evidence:
         self.pages_read = 0
         self._chunks: list[str] = []
         self._size = 0
+        self._opened: set[str] = set()
+        self._attempted: set[str] = set()
 
-    def add(self, text: str, is_page: bool) -> None:
+    def add(self, text: str, is_page: bool, url: str | None = None) -> None:
         if is_page:
             self.pages_read += 1
+            if url:
+                self._opened.add(url_key(url))
         chunk = _normalize(text)
         self._chunks.append(chunk)
         self._size += len(chunk)
@@ -65,6 +77,18 @@ class Evidence:
     def contains(self, text: str) -> bool:
         key = _normalize(text)
         return len(key) >= 2 and any(key in chunk for chunk in self._chunks)
+
+    def mark_attempted(self, url: str) -> None:
+        self._attempted.add(url_key(url))
+
+    def opened(self, url: str) -> bool:
+        """True if the page was read, or opening it was at least tried.
+
+        Counting failed attempts keeps a dead link from blocking finish().
+        """
+        key = url_key(url)
+        return key in self._opened or key in self._attempted
+
 
 class BrowserTools:
     """Browser-only tools; Playwright is confined to one dedicated thread."""
@@ -103,7 +127,13 @@ class BrowserTools:
         logger.info("Tool call START: %s(args=%s, kwargs=%s)", method, args, kwargs)
         t0 = time.perf_counter()
         try:
+            if method in ("go_to", "get_clean_content_from_url") and args:
+                self.evidence.mark_attempted(str(args[0]))
             value = getattr(self._get_browser(), method)(*args, **kwargs)
+            # Final URL after redirects: PageContent carries it; raw HTML comes from the current page
+            page_url = getattr(value, "url", None)
+            if method == "get_page_content":
+                page_url = getattr(getattr(self._browser, "page", None), "url", None)
             elapsed = time.perf_counter() - t0
             if method == "get_page_content" and isinstance(value, str):
                 truncated = len(value) > MAX_HTML_CHARS
@@ -119,7 +149,10 @@ class BrowserTools:
                     )
             result = self._json(value)
             if method in _EVIDENCE_METHODS:
-                self.evidence.add(result, is_page=method in _PAGE_METHODS)
+                self.evidence.add(
+                    result, is_page=method in _PAGE_METHODS,
+                    url=page_url if isinstance(page_url, str) else None,
+                )
             logger.info("Tool call OK: %s — %d chars returned (%.2fs)", method, len(result), elapsed)
             logger.debug("Tool call RESULT: %s → %.500s", method, result)
             return result

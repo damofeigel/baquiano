@@ -210,6 +210,8 @@ Small local models such as Llama 3.1 8B fail in characteristic ways. Each of the
 | Sends its whole plan (navigate, record, finish) as many tool calls in one reply, which would run before any page is read | Only the first tool call of each reply is kept (`OneToolCallPerTurn`); the rest are dropped and logged. |
 | Invents companies ("Company 1", `www.company1.com`) | An evidence log of all text the browser returned. Names must appear in it, unseen websites are removed, and the fund name is checked too. |
 | Calls `finish` before reading anything | `finish` is refused until a page has been read. |
+| Records the portfolio URL but never opens it, then finishes with only the homepage's featured companies | `record_fund` replies with the next step ("Open …/portfolio"), and `finish` is refused while that page is unopened. After 2 refusals it's accepted with an error, so a stuck model can't use up every turn. A link that fails to load counts as tried. |
+| Uses a LinkedIn or other social profile as the company website | Social-network links are removed in code, whichever path the company came from. |
 | A long `record_companies` call is cut off at `max_tokens`, so vLLM returns it as plain text and the run would end quietly | Complete companies are recovered from the cut-off text, and the model is told to continue in smaller batches (up to 3 times). |
 | Context overflow on long runs | Page text is capped, and only the 2 most recent page reads stay in the history. Older ones are replaced with a short note. |
 | Writes "not found" or "N/A" instead of null | Converted to null. Implausible years and formatted amounts are cleaned up. |
@@ -382,8 +384,8 @@ Expected with small models: the model tried to plan several steps at once, and o
 **Log: `… does not appear on any page you have read`**
 The model tried to record a company that isn't in any page it read: invented, or with its name changed (accent dropped, words added). It's told to retry with the exact name.
 
-**Agent mode stops after the homepage's featured companies**
-The model saw the portfolio link but never opened it. Use `hybrid` mode, or pass the portfolio page URL directly (`portfolio:https://fund.com/portfolio`).
+**Log: `finish refused: portfolio page … not opened`**
+The model recorded the portfolio URL but tried to finish without opening it. It's told to open the page first. If it still refuses after 2 attempts, the run ends with the error `The portfolio page … was never opened; the list may be incomplete`. In that case use `hybrid` mode, or pass the portfolio page URL directly (`portfolio:https://fund.com/portfolio`).
 
 **Empty result for a fund**
 Check the reason in the summary. Common causes: the portfolio is private (behind a login or access key), the site is down, or the layout isn't a card grid. Try `--mode agent` for unusual layouts.

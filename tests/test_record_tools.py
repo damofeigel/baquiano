@@ -10,7 +10,11 @@ import asyncio
 import json
 
 import pytest
-from agents import Agent, Model, ModelResponse, Runner, Usage
+from agents import (
+    Agent, Model, ModelResponse, 
+    Runner, ToolsToFinalOutputResult, 
+    Usage, function_tool
+)
 from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputMessage,
@@ -19,7 +23,10 @@ from openai.types.responses import (
 
 from src.core.llm import OneToolCallPerTurn
 from src.custom_agents.portfolio_agent import agent as agent_module
+from src.custom_agents.portfolio_agent.models import StartupInfo
+from src.custom_agents.portfolio_agent.tools import Evidence, url_key
 from src.custom_agents.portfolio_agent.recorder import (
+    MAX_FINISH_REFUSALS,
     RECORD_COMPANIES_SCHEMA,
     PortfolioRecorder,
     looks_like_broken_tool_call,
@@ -269,3 +276,125 @@ def test_agent_recovers_from_a_cut_off_tool_call(monkeypatch, tmp_path):
     resumed = json.dumps(model.inputs[2], default=str)
     assert "Unterminated" not in resumed and "AI-powered platform for clin" not in resumed
     assert "was cut off" in resumed
+
+
+# --- Portfolio page must be opened before finish --------------------------------
+
+HOME = "https://www.gridexponential.com"
+PORTFOLIO = "https://www.gridexponential.com/portfolio"
+PAGES = {
+    HOME: "# GRIDX\n## Headings\n- Meet the startups\n- Stämm\n- Puna Bio\n"
+          "## Links\n- [Portfolio](https://www.gridexponential.com/portfolio)",
+    PORTFOLIO: "# GRIDX | Portfolio\n## Headings\n- Stämm\n- Puna Bio\n- Alkemio\n- Antarka",
+}
+
+
+def _guarded_agent(model):
+    """Recorder with evidence, a fake navigate_to_url serving PAGES, and the
+    same stop rule as PortfolioAgent (stop only on an accepted finish)."""
+    evidence = Evidence()
+    rec = PortfolioRecorder(evidence=evidence)
+
+    @function_tool
+    def navigate_to_url(url: str) -> str:
+        """Open a page."""
+        evidence.mark_attempted(url)
+        if url not in PAGES:
+            return json.dumps({"error": "TimeoutError: page did not load"})
+        evidence.add(PAGES[url], is_page=True, url=url)
+        return PAGES[url]
+
+    def stop_when_finished(ctx, results):
+        return ToolsToFinalOutputResult(is_final_output=rec.finished, final_output="finished" if rec.finished else None)
+
+    agent = Agent(
+        name="test", instructions="x", model=OneToolCallPerTurn(model),
+        tools=[navigate_to_url, *rec.tools], tool_use_behavior=stop_when_finished,
+    )
+    return agent, rec
+
+
+def test_replay_finish_refused_until_portfolio_page_is_opened():
+    """Replays the GridX agent-mode run: homepage featured companies, then finish."""
+    model = ScriptedModel([
+        ("navigate_to_url", {"url": HOME}),
+        ("record_fund", {"fund_name": "GRIDX", "portfolio_url": PORTFOLIO}),
+        ("record_companies", {"companies": ["Stämm", "Puna Bio"]}),
+        ("finish", {"summary": "done"}),              # refused: portfolio not opened
+        ("navigate_to_url", {"url": PORTFOLIO}),
+        ("record_companies", {"companies": ["Alkemio", "Antarka"]}),
+        ("finish", {"summary": "done"}),              # accepted
+    ])
+    agent, rec = _guarded_agent(model)
+    asyncio.run(Runner.run(agent, "go", max_turns=10))
+
+    assert model.turns == 7
+    assert rec.finished
+    assert sorted(c.name for c in rec.companies) == ["Alkemio", "Antarka", "Puna Bio", "Stämm"]
+    assert rec.errors == []
+    history = json.dumps(model.inputs[-1], default=str)
+    assert "next_step" in history and "Open https://www.gridexponential.com/portfolio" in history
+    assert "Not finished: you recorded the portfolio page" in history
+
+
+def test_finish_accepted_with_error_after_repeated_refusals():
+    model = ScriptedModel(
+        [("navigate_to_url", {"url": HOME}),
+         ("record_fund", {"fund_name": "GRIDX", "portfolio_url": PORTFOLIO})]
+        + [("finish", {})] * (MAX_FINISH_REFUSALS + 1)
+    )
+    agent, rec = _guarded_agent(model)
+    asyncio.run(Runner.run(agent, "go", max_turns=10))
+
+    assert rec.finished
+    assert model.turns == 2 + MAX_FINISH_REFUSALS + 1
+    assert rec.errors == [f"The portfolio page {PORTFOLIO} was never opened; the list may be incomplete."]
+
+
+def test_dead_portfolio_link_does_not_block_finish():
+    dead = "https://www.gridexponential.com/old-portfolio"
+    model = ScriptedModel([
+        ("navigate_to_url", {"url": HOME}),
+        ("record_fund", {"fund_name": "GRIDX", "portfolio_url": dead}),
+        ("navigate_to_url", {"url": dead}),           # fails to load
+        ("finish", {}),                               # accepted: opening was tried
+    ])
+    agent, rec = _guarded_agent(model)
+    asyncio.run(Runner.run(agent, "go", max_turns=10))
+
+    assert rec.finished and model.turns == 4
+
+
+def test_no_next_step_when_portfolio_is_the_page_already_open():
+    model = ScriptedModel([
+        ("navigate_to_url", {"url": PORTFOLIO}),
+        ("record_fund", {"fund_name": "GRIDX", "portfolio_url": "gridexponential.com/portfolio/"}),
+        ("finish", {}),
+    ])
+    agent, rec = _guarded_agent(model)
+    asyncio.run(Runner.run(agent, "go", max_turns=5))
+
+    assert rec.finished and model.turns == 3
+    assert "next_step" not in json.dumps(model.inputs[2], default=str)
+
+
+def test_url_key_ignores_scheme_www_slash_and_fragment():
+    variants = [
+        "https://www.gridexponential.com/portfolio",
+        "http://gridexponential.com/portfolio/",
+        "gridexponential.com/portfolio#top",
+        "https://WWW.GridExponential.com/portfolio",
+    ]
+    assert len({url_key(v) for v in variants}) == 1
+    assert url_key("https://fund.example/portfolio?page=2") != url_key("https://fund.example/portfolio")
+
+
+def test_social_network_websites_are_dropped():
+    rec = PortfolioRecorder()
+    rec.add_companies([
+        StartupInfo(name="CASPR Biotech", website="https://www.linkedin.com/company/casprbio/"),
+        StartupInfo(name="Puna Bio", website="https://puna.bio"),
+    ])
+    by_name = {c.name: c for c in rec.companies}
+    assert by_name["CASPR Biotech"].website is None
+    assert by_name["Puna Bio"].website == "https://puna.bio"

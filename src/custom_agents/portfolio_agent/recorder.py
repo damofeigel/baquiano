@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from agents import FunctionTool, function_tool
 from pydantic import ValidationError
 
+from .heuristics import is_social_url
 from .models import FinderResult, StartupInfo
 
 logger = logging.getLogger(__name__)
@@ -139,10 +140,17 @@ def _domain(url: str | None) -> str | None:
     return host.removeprefix("www.") or None
 
 
+# finish() is refused this many times while the recorded portfolio page is
+# unopened, then accepted with an error so a stuck model can't burn every turn.
+MAX_FINISH_REFUSALS = 2
+
+
 class EvidenceLike(Protocol):
     pages_read: int
 
     def contains(self, text: str) -> bool: ...
+
+    def opened(self, url: str) -> bool: ...
 
 
 class PortfolioRecorder:
@@ -161,6 +169,7 @@ class PortfolioRecorder:
         self.source_url: str | None = None
         self.errors: list[str] = []
         self.finished = False
+        self._finish_refusals = 0
         self._companies: dict[str, StartupInfo] = {}
 
     @property
@@ -178,6 +187,9 @@ class PortfolioRecorder:
         for company in companies:
             if not company.name or not company.name.strip():
                 continue
+            if company.website and is_social_url(company.website):
+                logger.info("Dropping social-network website %s for %s", company.website, company.name)
+                company = company.model_copy(update={"website": None})
             key = self._find_existing(company)
             if key is None:
                 self._companies[_dedupe_key(company.name)] = company
@@ -233,6 +245,14 @@ class PortfolioRecorder:
             errors=errors,
         )
 
+    def portfolio_unopened(self) -> bool:
+        """True if a portfolio URL was recorded but its page was never opened."""
+        return bool(
+            self.evidence is not None
+            and self.source_url
+            and not self.evidence.opened(self.source_url)
+        )
+
     def check_evidence(self, companies: list[StartupInfo]) -> tuple[list[StartupInfo], list[str]]:
         """Keep companies whose name appears on a page that was read.
 
@@ -271,7 +291,14 @@ class PortfolioRecorder:
                 })
             self.set_fund(fund_name, portfolio_url or None)
             logger.info("Recorded fund: %s (%s)", self.fund_name, self.source_url)
-            return json.dumps({"ok": True, "fund_name": self.fund_name})
+            reply: dict[str, Any] = {"ok": True, "fund_name": self.fund_name}
+            if self.portfolio_unopened():
+                # Small models follow the latest tool result more than the prompt
+                reply["next_step"] = (
+                    f"Open {self.source_url} with navigate_to_url and record "
+                    f"every company listed there."
+                )
+            return json.dumps(reply)
 
         async def _record_companies(ctx: Any, raw_args: str) -> str:
             companies, problems = parse_companies_args(raw_args)
@@ -336,6 +363,19 @@ class PortfolioRecorder:
             if self.evidence is not None and self.evidence.pages_read == 0:
                 return ("Not finished: you have not read any page yet. "
                         "Use navigate_to_url on the fund's website first.")
+            if self.portfolio_unopened():
+                self._finish_refusals += 1
+                if self._finish_refusals <= MAX_FINISH_REFUSALS:
+                    logger.warning("finish refused: portfolio page %s not opened", self.source_url)
+                    return (
+                        f"Not finished: you recorded the portfolio page {self.source_url} "
+                        f"but have not opened it. Open it with navigate_to_url, record "
+                        f"its companies, then call finish."
+                    )
+                self.add_error(
+                    f"The portfolio page {self.source_url} was never opened; "
+                    f"the list may be incomplete."
+                )
             self.finished = True
             logger.info("Agent finished: %s", summary)
             return "finished"

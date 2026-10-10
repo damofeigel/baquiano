@@ -38,7 +38,7 @@ def _prepass_sync(
     def read_html() -> str:
         html = browser.get_page_content()
         if evidence is not None:
-            evidence.add(html, is_page=True)
+            evidence.add(html, is_page=True, url=browser.page.url)
         return html
 
     result = PrepassResult()
