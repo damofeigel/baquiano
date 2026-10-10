@@ -29,6 +29,8 @@ EXPECTED_TOOLS = {
 
 
 class FakePageContent:
+    plain_text = "# Fund Portfolio\n\n## Content\nExample Startup\n\n## Links\n- [Example Startup](https://startup.example)"
+
     def to_dict(self):
         return {
             "url": "https://fund.example/portfolio",
@@ -179,10 +181,7 @@ def test_navigate_to_url_returns_structured_page_content(tools_module):
             )
         )
 
-        payload = json.loads(result)
-        assert payload["title"] == "Fund Portfolio"
-        assert payload["paragraphs"] == ["Example Startup"]
-        assert payload["links"][0]["href"] == "https://startup.example"
+        assert result == FakePageContent.plain_text
         assert tools_module.calls[0] == (
             "go_to",
             ("https://fund.example/portfolio",),
@@ -201,7 +200,7 @@ def test_get_page_content_from_url_calls_temporary_page_method(tools_module):
             )
         )
 
-        assert json.loads(result)["title"] == "Fund Portfolio"
+        assert result == FakePageContent.plain_text
         assert tools_module.calls[0] == (
             "get_clean_content_from_url",
             ("https://fund.example/companies",),

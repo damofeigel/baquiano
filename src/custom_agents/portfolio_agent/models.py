@@ -6,6 +6,9 @@ from __future__ import annotations
 from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 
+# Placeholder strings small models emit instead of null
+_EMPTY_MARKERS = {"", "null", "none", "n/a", "na", "unknown", "not found", "not available", "-"}
+
 
 class StartupInfo(BaseModel):
     """
@@ -30,14 +33,37 @@ class StartupInfo(BaseModel):
     source_url: Optional[str] = None      # → sources.url (fund portfolio page)
     fund_name: Optional[str] = None       # → actor name of the investor
 
+    @field_validator(
+        "description", "website", "email", "phone", "sector", "country",
+        "funding_round", "source_url", "fund_name",
+        mode="before",
+    )
+    @classmethod
+    def _blank_to_none(cls, v):
+        if isinstance(v, str) and v.strip().lower() in _EMPTY_MARKERS:
+            return None
+        return v
+
     @field_validator("year_created", mode="before")
     @classmethod
     def _coerce_year(cls, v):
         if v is None:
             return None
         try:
-            return int(str(v).strip()[:4])
+            year = int(str(v).strip()[:4])
         except (ValueError, TypeError):
+            return None
+        return year if 1800 <= year <= 2100 else None
+
+    @field_validator("funding_amount_usd", mode="before")
+    @classmethod
+    def _coerce_amount(cls, v):
+        # Unparseable amounts become null instead of failing the whole record
+        if v is None or isinstance(v, (int, float)):
+            return v
+        try:
+            return float(str(v).replace(",", "").replace("$", "").strip())
+        except ValueError:
             return None
 
 

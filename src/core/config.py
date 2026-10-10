@@ -13,7 +13,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 VLLM_BASE_URL: str = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL: str = os.getenv("VLLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.3")
 LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
-LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "32768"))
+LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 API_KEY: str = os.getenv("API_KEY", "not-needed")
 
 # I/O

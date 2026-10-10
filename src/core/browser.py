@@ -156,27 +156,35 @@ def extract_page_content(
         if len(links) >= cfg.max_links:
             break
 
-    # 8. Plain-text assembly (formatted markdown)
-    sections: list[str] = []
+    # 8. Plain-text assembly (formatted markdown) within max_text_chars.
+    # Links carry company websites and pagination, so they get up to half the
+    # budget and the content section is truncated first.
+    truncated_note = "\n...[truncated for length]"
+    budget = cfg.max_text_chars
 
+    def _fit(text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - len(truncated_note))] + truncated_note
+
+    header_parts: list[str] = []
     if title:
-        sections.append(f"# {title}")
-
+        header_parts.append(f"# {title}")
     if headings:
-        sections.append("## Headings\n" + "\n".join(f"- {h}" for h in headings))
+        header_parts.append("## Headings\n" + "\n".join(f"- {h}" for h in headings))
+    header = _fit("\n\n".join(header_parts), budget // 4)
 
-    if paragraphs:
-        sections.append("## Content\n" + "\n\n".join(paragraphs))
-
+    links_block = ""
     if links:
         link_lines = "\n".join(f"- [{l['text']}]({l['href']})" for l in links)
-        sections.append(f"## Links\n{link_lines}")
+        links_block = _fit(f"## Links\n{link_lines}", budget // 2)
 
-    plain_text = "\n\n".join(sections)
+    content_block = ""
+    if paragraphs:
+        content_budget = budget - len(header) - len(links_block) - 4  # section separators
+        content_block = _fit("## Content\n" + "\n\n".join(paragraphs), content_budget)
 
-    # Enforce max text length budget for LLM context
-    if len(plain_text) > cfg.max_text_chars:
-        plain_text = plain_text[: cfg.max_text_chars] + "\n\n...[Content truncated for length]"
+    plain_text = "\n\n".join(part for part in (header, content_block, links_block) if part)
 
     return PageContent(
         url=base_url,

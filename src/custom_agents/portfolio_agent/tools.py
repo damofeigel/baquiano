@@ -13,12 +13,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from agents import function_tool
 
 from src.core.browser import BrowserManager
 from src.core.config import MAX_HTML_CHARS
+
+logger = logging.getLogger(__name__)
 
 class BrowserTools:
     """Browser-only tools; Playwright is confined to one dedicated thread."""
@@ -28,35 +32,67 @@ class BrowserTools:
         self._browser: BrowserManager | None = None
         self._closed = False
         self.tools = self._build_tools()
+        logger.info("BrowserTools initialized (%d tools registered)", len(self.tools))
 
     def _get_browser(self) -> BrowserManager:
         # Always called on the dedicated Playwright thread.
         if self._browser is None:
+            logger.info("Lazy-initializing BrowserManager on playwright thread")
             self._browser = BrowserManager()
+            logger.info("BrowserManager ready")
         return self._browser
 
     @staticmethod
     def _json(value: Any) -> str:
+        # Page content goes to the model as its compact markdown only; the full
+        # dict repeats paragraphs and links and bypasses the max_text_chars cap.
+        plain_text = getattr(value, "plain_text", None)
+        if isinstance(plain_text, str):
+            return plain_text
         if hasattr(value, "to_dict") and callable(value.to_dict):
             value = value.to_dict()
         return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
 
     def _invoke_sync(self, method: str, *args: Any, **kwargs: Any) -> str:
         if self._closed:
+            logger.warning("Tool call '%s' rejected — BrowserTools is closed", method)
             return json.dumps({"error": "BrowserTools is closed."})
+        logger.info("Tool call START: %s(args=%s, kwargs=%s)", method, args, kwargs)
+        t0 = time.perf_counter()
         try:
             value = getattr(self._get_browser(), method)(*args, **kwargs)
+            elapsed = time.perf_counter() - t0
             if method == "get_page_content" and isinstance(value, str):
+                truncated = len(value) > MAX_HTML_CHARS
                 value = {
                     "html": value[:MAX_HTML_CHARS],
-                    "truncated": len(value) > MAX_HTML_CHARS,
+                    "truncated": truncated,
                     "original_length": len(value),
                 }
-            return self._json(value)
+                if truncated:
+                    logger.info(
+                        "Tool call OK: %s — truncated %d→%d chars (%.2fs)",
+                        method, value["original_length"], MAX_HTML_CHARS, elapsed,
+                    )
+            result = self._json(value)
+            logger.info("Tool call OK: %s — %d chars returned (%.2fs)", method, len(result), elapsed)
+            logger.debug("Tool call RESULT: %s → %.500s", method, result)
+            return result
         except Exception as exc:
+            elapsed = time.perf_counter() - t0
             err_str = str(exc)
             if "Target page, context or browser has been closed" in err_str or "Connection closed" in err_str:
+                logger.warning(
+                    "Tool call ERROR: %s — browser connection lost, will re-init (%.2fs): %s",
+                    method, elapsed, exc,
+                )
                 self._browser = None
+            else:
+                logger.error(
+                    "Tool call ERROR: %s — %s: %s (%.2fs)",
+                    method, type(exc).__name__, exc, elapsed,
+                    exc_info=True,
+                )
             return json.dumps(
                 {"error": f"{type(exc).__name__}: {exc}", "operation": method},
                 ensure_ascii=False,
@@ -64,7 +100,9 @@ class BrowserTools:
 
     async def _invoke(self, method: str, *args: Any, **kwargs: Any) -> str:
         if self._closed:
+            logger.warning("Async invoke '%s' rejected — BrowserTools is closed", method)
             return json.dumps({"error": "BrowserTools is closed."})
+        logger.debug("Dispatching '%s' to playwright executor thread", method)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
@@ -89,7 +127,7 @@ class BrowserTools:
 
         @function_tool(strict_mode=False)
         async def get_current_page_html() -> str:
-            """Return up to 12,000 characters of raw HTML; use only if cleaned content is insufficient."""
+            """Return the start of the raw HTML (truncated); use only if cleaned content is insufficient."""
             return await self._invoke("get_page_content")
 
         @function_tool(strict_mode=False)
@@ -139,18 +177,25 @@ class BrowserTools:
 
     def _close_browser_sync(self) -> None:
         if self._browser is not None:
+            logger.info("Closing BrowserManager on playwright thread")
             self._browser.close()
             self._browser = None
+            logger.info("BrowserManager closed")
 
     def close(self) -> None:
         """Close Playwright after the agent run finishes."""
         if self._closed:
+            logger.debug("close() called but already closed — skipping")
             return
         self._closed = True
+        logger.info("Shutting down BrowserTools")
         try:
             self._executor.submit(self._close_browser_sync).result()
+        except Exception:
+            logger.error("Error during browser shutdown", exc_info=True)
         finally:
             self._executor.shutdown(wait=True, cancel_futures=True)
+            logger.info("BrowserTools shutdown complete")
 
     def __enter__(self) -> "BrowserTools":
         return self
