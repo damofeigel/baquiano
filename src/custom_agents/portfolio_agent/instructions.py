@@ -54,7 +54,8 @@ or portfolio company. Mature companies count too.
 
 Exclude, unless the site says they are investments: the fund itself, its
 team and advisors, its LPs and co-investors, customers, partners, sponsors,
-accelerators, and companies only mentioned in news or blog posts.
+accelerators, and companies only mentioned in news or blog posts. Ignore social 
+media sites (e.g Linkedin, youtube.com, etc)
 
 # FIELDS FOR EACH COMPANY
 

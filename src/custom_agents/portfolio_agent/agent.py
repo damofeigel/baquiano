@@ -16,6 +16,7 @@ from agents import (
 )
 
 from src.core import config
+from src.custom_agents.base import RunReport
 from src.core.llm import OneToolCallPerTurn, get_client, get_model
 
 from .context import worker_run_config
@@ -227,3 +228,16 @@ class PortfolioAgent:
     ) -> FinderResult:
         """Synchronous convenience wrapper to run portfolio extraction."""
         return asyncio.run(self.run(url, max_turns=max_turns, mode=mode))
+
+
+async def run_portfolio(
+    url: str, *, max_turns: int = 25, mode: str | None = None, **_: Any,
+) -> RunReport:
+    """Pipeline entry point: extract one fund's portfolio (see AgentSpec)."""
+    with PortfolioAgent() as agent:
+        result = await agent.run(url, max_turns=max_turns, mode=mode)
+    return RunReport(
+        summary=f"Fund '{result.fund_name}', {len(result.startups)} startup(s)",
+        items=len(result.startups),
+        errors=list(result.errors),
+    )

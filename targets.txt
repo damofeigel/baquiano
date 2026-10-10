@@ -1,0 +1,5 @@
+# One URL per line: AGENT:URL
+#   AGENT is the extraction agent to use; list them with: python pipeline.py --list-agents
+# Examples:
+#   portfolio:https://www.gridexponential.com
+#   portfolio:https://www.example-fund.com/portafolio
