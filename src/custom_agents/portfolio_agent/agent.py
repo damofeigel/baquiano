@@ -35,9 +35,10 @@ MODES = ("hybrid", "deterministic", "agent")
 MAX_RECOVERIES = 3
 RECOVERY_NOTE = (
     "Your last tool call was cut off and could not be read. {saved} companies "
-    "from it were saved. Continue with smaller record_companies calls: at most "
-    "10 companies each, `companies` as a JSON array (not a string), one short "
-    "sentence per description. Then call finish."
+    "from it were saved. {saved_names} Continue with the companies NOT in this "
+    "list, using smaller record_companies calls: at most 10 companies each, "
+    "`companies` as a JSON array (not a string), one short sentence per "
+    "description. Then call finish."
 )
 MAX_PROMPT_NAMES_CHARS = 3_000
 
@@ -95,7 +96,13 @@ class PortfolioAgent:
             model_settings=ModelSettings(
                 temperature=config.LLM_TEMPERATURE,
                 max_tokens=config.LLM_MAX_TOKENS,
+                # "required" makes vLLM force output to the tool schemas: no
+                # lists sent as strings, no malformed JSON.
+                tool_choice=config.LLM_TOOL_CHOICE or None,
             ),
+            # The SDK otherwise resets tool_choice to "auto" after the first tool
+            # call. Safe to keep: runs end on an accepted finish() or max_turns.
+            reset_tool_choice=not config.LLM_TOOL_CHOICE,
             tools=self.browser_tools.tools + self.recorder.tools,
             # Llama 3.1 with JSON tool calling tends to answer only with tool
             # calls, so the run ends on an accepted finish() call rather than
@@ -202,7 +209,8 @@ class PortfolioAgent:
             history = result.to_input_list()
             while history and isinstance(history[-1], dict) and history[-1].get("role") == "assistant":
                 history.pop()  # the unreadable reply only wastes context
-            run_input = history + [{"role": "user", "content": RECOVERY_NOTE.format(saved=saved)}]
+            note = RECOVERY_NOTE.format(saved=saved, saved_names=self.recorder.saved_names_note())
+            run_input = history + [{"role": "user", "content": note}]
 
         self.recorder.add_error(
             "The model's tool calls were repeatedly cut off or unreadable; "

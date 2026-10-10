@@ -245,6 +245,17 @@ class PortfolioRecorder:
             errors=errors,
         )
 
+    def saved_names_note(self, max_chars: int = 2_000) -> str:
+        """Compact list of saved names, so the model knows where to continue.
+
+        Without it, a model that lost track (e.g. after a cut-off call was
+        removed from its history) starts the list over from the beginning.
+        """
+        names = ", ".join(c.name for c in self.companies)
+        if len(names) > max_chars:
+            names = names[:max_chars].rsplit(", ", 1)[0] + ", ..."
+        return f"Saved so far ({len(self._companies)}): {names or 'none'}."
+
     def portfolio_unopened(self) -> bool:
         """True if a portfolio URL was recorded but its page was never opened."""
         return bool(
@@ -311,13 +322,20 @@ class PortfolioRecorder:
             )
             if problems:
                 logger.warning("record_companies problems: %s | raw args: %.500s", problems, raw_args)
-            return json.dumps({
+            reply: dict[str, Any] = {
                 "ok": not problems,
                 "new": added,
                 "merged": merged,
                 "total_recorded": len(self._companies),
-                **({"problems": problems} if problems else {}),
-            }, ensure_ascii=False)
+            }
+            if problems:
+                reply["problems"] = problems
+            if added == 0 and merged:
+                reply["note"] = (
+                    "All of these were already saved. " + self.saved_names_note()
+                    + " Record only companies not in this list; if none are left, call finish."
+                )
+            return json.dumps(reply, ensure_ascii=False)
 
         record_companies = FunctionTool(
             name="record_companies",

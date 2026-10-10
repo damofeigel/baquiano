@@ -136,9 +136,11 @@ class ScriptedModel(Model):
         self.calls = list(calls)
         self.turns = 0
         self.inputs: list = []
+        self.settings: list = []
 
-    async def get_response(self, system_instructions, input, *args, **kwargs) -> ModelResponse:
+    async def get_response(self, system_instructions, input, model_settings=None, *args, **kwargs) -> ModelResponse:
         self.inputs.append(input)
+        self.settings.append(model_settings)
         step = self.calls[self.turns]
         self.turns += 1
         if isinstance(step, str):
@@ -276,6 +278,8 @@ def test_agent_recovers_from_a_cut_off_tool_call(monkeypatch, tmp_path):
     resumed = json.dumps(model.inputs[2], default=str)
     assert "Unterminated" not in resumed and "AI-powered platform for clin" not in resumed
     assert "was cut off" in resumed
+    # It is told which companies are saved, so it continues instead of restarting
+    assert "Saved so far (2): Alkemio, Antarka" in resumed
 
 
 # --- Portfolio page must be opened before finish --------------------------------
@@ -398,3 +402,55 @@ def test_social_network_websites_are_dropped():
     by_name = {c.name: c for c in rec.companies}
     assert by_name["CASPR Biotech"].website is None
     assert by_name["Puna Bio"].website == "https://puna.bio"
+
+
+
+# --- Knowing where to continue ----------------------------------------------------
+
+def test_batch_with_nothing_new_lists_saved_names():
+    """Replays the post-recovery loop: the model resends companies already saved."""
+    model = ScriptedModel([
+        ("navigate_to_url", {"url": PORTFOLIO}),
+        ("record_companies", {"companies": ["Stämm", "Puna Bio"]}),
+        ("record_companies", {"companies": ["Stämm", "Puna Bio"]}),   # nothing new
+        ("finish", {}),
+    ])
+    agent, rec = _guarded_agent(model)
+    asyncio.run(Runner.run(agent, "go", max_turns=10))
+
+    first, second = (json.dumps(model.inputs[i], default=str, ensure_ascii=False) for i in (2, 3))
+    assert "already saved" not in first             # new companies: no note
+    assert "All of these were already saved. Saved so far (2): Stämm, Puna Bio." in second
+
+
+def test_saved_names_note_is_capped():
+    rec = PortfolioRecorder()
+    rec.add_companies([StartupInfo(name=f"Startup number {i}") for i in range(500)])
+    note = rec.saved_names_note(max_chars=200)
+    assert note.startswith("Saved so far (500): Startup number 0, ")
+    assert note.endswith(", ....") and len(note) < 260
+
+
+# --- tool_choice ------------------------------------------------------------------
+
+@pytest.mark.parametrize("setting, expected_choice, expected_reset", [
+    ("", None, True),
+    ("required", "required", False),
+])
+def test_tool_choice_setting_is_sent_on_every_turn(monkeypatch, tmp_path, setting, expected_choice, expected_reset):
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(agent_module.config, "LLM_TOOL_CHOICE", setting)
+    model = ScriptedModel([
+        ("record_fund", {"fund_name": "GRIDX"}),
+        ("record_companies", {"companies": ["Alkemio"]}),
+        ("finish", {}),
+    ])
+    portfolio_agent = _agent_with_model(monkeypatch, model, page_text=GRIDX_PAGE)
+    try:
+        asyncio.run(portfolio_agent.run("https://gridx.example", mode="agent", max_turns=5))
+    finally:
+        portfolio_agent.close()
+
+    assert portfolio_agent._worker.reset_tool_choice is expected_reset
+    # Not just the first turn: the SDK would reset it to auto after a tool call
+    assert [s.tool_choice for s in model.settings] == [expected_choice] * 3

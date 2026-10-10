@@ -15,6 +15,9 @@ VLLM_MODEL: str = os.getenv("VLLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.3")
 LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
 LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 API_KEY: str = os.getenv("API_KEY", "not-needed")
+# Empty: the server decides (auto). "required": vLLM constrains every reply to a
+# valid tool call matching the schemas (needs a vLLM version that supports it).
+LLM_TOOL_CHOICE: str = os.getenv("LLM_TOOL_CHOICE", "").strip()
 
 # Portfolio extraction mode:
 #   hybrid        deterministic pre-pass, then the agent fills gaps (default)
