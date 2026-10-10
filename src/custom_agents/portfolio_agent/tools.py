@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, TypeVar
@@ -26,6 +27,45 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# Browser methods whose output is page text the model can legitimately cite
+_PAGE_METHODS = {"go_to", "get_clean_content", "get_clean_content_from_url", "get_page_content"}
+_EVIDENCE_METHODS = _PAGE_METHODS | {"search_page"}
+
+
+def _normalize(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text.lower())
+
+
+class Evidence:
+    """Text the browser has actually returned during this run.
+
+    Lets the record tools reject companies the model never saw on a page,
+    e.g. invented placeholders like "Company 1".
+    """
+
+    MAX_CHARS = 500_000
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.pages_read = 0
+        self._chunks: list[str] = []
+        self._size = 0
+
+    def add(self, text: str, is_page: bool) -> None:
+        if is_page:
+            self.pages_read += 1
+        chunk = _normalize(text)
+        self._chunks.append(chunk)
+        self._size += len(chunk)
+        while self._size > self.MAX_CHARS and len(self._chunks) > 1:
+            self._size -= len(self._chunks.pop(0))
+
+    def contains(self, text: str) -> bool:
+        key = _normalize(text)
+        return len(key) >= 2 and any(key in chunk for chunk in self._chunks)
+
 class BrowserTools:
     """Browser-only tools; Playwright is confined to one dedicated thread."""
 
@@ -33,6 +73,7 @@ class BrowserTools:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="playwright")
         self._browser: BrowserManager | None = None
         self._closed = False
+        self.evidence = Evidence()
         self.tools = self._build_tools()
         logger.info("BrowserTools initialized (%d tools registered)", len(self.tools))
 
@@ -77,6 +118,8 @@ class BrowserTools:
                         method, value["original_length"], MAX_HTML_CHARS, elapsed,
                     )
             result = self._json(value)
+            if method in _EVIDENCE_METHODS:
+                self.evidence.add(result, is_page=method in _PAGE_METHODS)
             logger.info("Tool call OK: %s — %d chars returned (%.2fs)", method, len(result), elapsed)
             logger.debug("Tool call RESULT: %s → %.500s", method, result)
             return result

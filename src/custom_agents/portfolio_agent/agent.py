@@ -11,17 +11,18 @@ from agents import (
     MaxTurnsExceeded,
     ModelSettings,
     Runner,
+    ToolsToFinalOutputResult,
     set_tracing_disabled,
 )
 
 from src.core import config
-from src.core.llm import get_client, get_model
+from src.core.llm import OneToolCallPerTurn, get_client, get_model
 
 from .context import worker_run_config
 from .instructions import FINDER_AGENT_INSTRUCTIONS
 from .models import FinderResult
 from .prepass import PrepassResult, run_prepass
-from .recorder import PortfolioRecorder
+from .recorder import PortfolioRecorder, looks_like_broken_tool_call, salvage_companies
 from .tools import BrowserTools
 
 set_tracing_disabled(True)
@@ -29,6 +30,13 @@ set_tracing_disabled(True)
 logger = logging.getLogger(__name__)
 
 MODES = ("hybrid", "deterministic", "agent")
+MAX_RECOVERIES = 3
+RECOVERY_NOTE = (
+    "Your last tool call was cut off and could not be read. {saved} companies "
+    "from it were saved. Continue with smaller record_companies calls: at most "
+    "10 companies each, `companies` as a JSON array (not a string), one short "
+    "sentence per description. Then call finish."
+)
 MAX_PROMPT_NAMES_CHARS = 3_000
 
 
@@ -73,9 +81,9 @@ class PortfolioAgent:
 
     def __init__(self) -> None:
         self.browser_tools = BrowserTools()
-        self.recorder = PortfolioRecorder()
+        self.recorder = PortfolioRecorder(evidence=self.browser_tools.evidence)
         self.client = get_client()
-        self.model = get_model()
+        self.model = OneToolCallPerTurn(get_model())
 
         self._worker = Agent(
             name="PortfolioFinderWorker",
@@ -87,9 +95,16 @@ class PortfolioAgent:
             ),
             tools=self.browser_tools.tools + self.recorder.tools,
             # Llama 3.1 with JSON tool calling tends to answer only with tool
-            # calls, so the run ends on a finish() call rather than plain text.
-            tool_use_behavior={"stop_at_tool_names": ["finish"]},
+            # calls, so the run ends on an accepted finish() call rather than
+            # plain text. finish() refuses (and the run continues) until a page
+            # has been read.
+            tool_use_behavior=self._stop_when_finished,
         )
+
+    def _stop_when_finished(self, context: Any, results: list[Any]) -> ToolsToFinalOutputResult:
+        if self.recorder.finished:
+            return ToolsToFinalOutputResult(is_final_output=True, final_output="finished")
+        return ToolsToFinalOutputResult(is_final_output=False)
 
     def close(self) -> None:
         """Close browser resources and background thread pools."""
@@ -113,6 +128,7 @@ class PortfolioAgent:
         if mode not in MODES:
             raise ValueError(f"Unknown mode {mode!r}; expected one of {MODES}")
         self.recorder.reset()
+        self.browser_tools.evidence.reset()
 
         prepass: PrepassResult | None = None
         if mode in ("hybrid", "deterministic"):
@@ -135,25 +151,60 @@ class PortfolioAgent:
         return self._finish(url)
 
     async def _run_worker(self, prompt: str, max_turns: int) -> None:
+        """Run the worker, recovering when a tool call comes back unreadable.
+
+        When the model's tool-call JSON is cut off (usually at max_tokens),
+        vLLM returns it as plain text and the SDK treats that as the final
+        answer. Instead of ending there, salvage complete companies from the
+        text, drop it from the history and ask the model to continue.
+        """
         logger.info("Worker starting (max_turns=%d)", max_turns)
-        try:
-            worker_result = await Runner.run(
-                self._worker, prompt,
-                max_turns=max_turns,
-                run_config=worker_run_config(),
+        run_input: str | list[Any] = prompt
+        turns_left = max_turns
+        for _ in range(MAX_RECOVERIES + 1):
+            try:
+                result = await Runner.run(
+                    self._worker, run_input,
+                    max_turns=turns_left,
+                    run_config=worker_run_config(),
+                )
+            except MaxTurnsExceeded:
+                logger.warning("Worker hit max_turns=%d; keeping recorded results", max_turns)
+                self.recorder.add_error(
+                    f"Stopped after reaching the {max_turns}-turn limit; "
+                    f"the portfolio may be incomplete."
+                )
+                return
+            except (AgentsException, openai.APIError) as exc:
+                if not self.recorder.companies:
+                    raise
+                logger.error("Worker failed; keeping recorded results", exc_info=True)
+                self.recorder.add_error(f"Run stopped early: {type(exc).__name__}: {exc}")
+                return
+
+            text = str(result.final_output or "")
+            logger.debug("Worker final message:\n%s", text)
+            if self.recorder.finished or not looks_like_broken_tool_call(text):
+                return
+
+            salvaged, _ = self.recorder.check_evidence(salvage_companies(text))
+            saved, _ = self.recorder.add_companies(salvaged)
+            turns_left -= len(result.raw_responses)
+            logger.warning(
+                "Unreadable tool call (%d chars); salvaged %d companies, %d turns left",
+                len(text), saved, turns_left,
             )
-            logger.debug("Worker final message:\n%s", worker_result.final_output)
-        except MaxTurnsExceeded:
-            logger.warning("Worker hit max_turns=%d; keeping recorded results", max_turns)
-            self.recorder.add_error(
-                f"Stopped after reaching the {max_turns}-turn limit; "
-                f"the portfolio may be incomplete."
-            )
-        except (AgentsException, openai.APIError) as exc:
-            if not self.recorder.companies:
-                raise
-            logger.error("Worker failed; keeping recorded results", exc_info=True)
-            self.recorder.add_error(f"Run stopped early: {type(exc).__name__}: {exc}")
+            if turns_left <= 0:
+                break
+            history = result.to_input_list()
+            while history and isinstance(history[-1], dict) and history[-1].get("role") == "assistant":
+                history.pop()  # the unreadable reply only wastes context
+            run_input = history + [{"role": "user", "content": RECOVERY_NOTE.format(saved=saved)}]
+
+        self.recorder.add_error(
+            "The model's tool calls were repeatedly cut off or unreadable; "
+            "the portfolio may be incomplete."
+        )
 
     def _finish(self, url: str) -> FinderResult:
         output = self.recorder.build_result(url)

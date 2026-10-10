@@ -13,9 +13,10 @@ pages, so save companies right after reading each page.
 
 - record_fund(fund_name, portfolio_url): call once you know the fund.
 - record_companies(companies): call after EVERY page that lists portfolio
-  companies. Send at most 25 companies per call; if the page has more, call
-  it again with the next 25 until all are saved. Repeating a company merges
-  new details.
+  companies. `companies` is a JSON array of objects, never a string. Send at
+  most 15 companies per call; if the page has more, call it again with the
+  next 15 until all are saved. Keep descriptions to one short sentence.
+  Repeating a company merges new details.
 - remove_companies(names, reason): remove recorded entries that are
   clearly not portfolio companies.
 - report_error(message): call only for a real problem that may make the

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from agents import FunctionTool, function_tool
@@ -34,7 +34,7 @@ RECORD_COMPANIES_SCHEMA = {
     "properties": {
         "companies": {
             "type": "array",
-            "description": "Companies from the current page, at most 25 per call",
+            "description": "A JSON array (never a string) of at most 15 companies",
             "items": {
                 "type": "object",
                 "properties": {
@@ -90,6 +90,44 @@ def parse_companies_args(raw: str) -> tuple[list[StartupInfo], list[str]]:
     return companies, problems
 
 
+TOOL_NAMES = {"record_fund", "record_companies", "remove_companies", "report_error", "finish"}
+
+
+def looks_like_broken_tool_call(text: str) -> bool:
+    """True when a final reply is really a tool call vLLM could not parse."""
+    stripped = text.lstrip()
+    return stripped.startswith(("{", "[", "<|python_tag|>")) and '"name"' in stripped
+
+
+def salvage_companies(text: str) -> list[StartupInfo]:
+    """Pull complete company objects out of a cut-off record_companies call.
+
+    Small models often send the list as an escaped JSON string; when the reply
+    is truncated at max_tokens, every company before the cut is still intact.
+    """
+    if "record_companies" not in text:
+        return []
+    if re.search(r'"companies"\s*:\s*"', text):
+        text = text.replace('\\"', '"')
+    decoder = json.JSONDecoder()
+    found: list[StartupInfo] = []
+    i = text.find("{", 1)
+    while i != -1:
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            i = text.find("{", i + 1)
+            continue
+        name = obj.get("name") if isinstance(obj, dict) else None
+        if isinstance(name, str) and name not in TOOL_NAMES:
+            try:
+                found.append(StartupInfo.model_validate(obj))
+            except ValidationError:
+                pass
+        i = text.find("{", end)
+    return found
+
+
 def _dedupe_key(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
@@ -101,10 +139,19 @@ def _domain(url: str | None) -> str | None:
     return host.removeprefix("www.") or None
 
 
+class EvidenceLike(Protocol):
+    pages_read: int
+
+    def contains(self, text: str) -> bool: ...
+
+
 class PortfolioRecorder:
     """Accumulates fund identity, companies and errors across one agent run."""
 
-    def __init__(self) -> None:
+    def __init__(self, evidence: EvidenceLike | None = None) -> None:
+        # When set, the record tools only accept names that appear in page
+        # text the browser returned. None disables the check (pre-pass, tests).
+        self.evidence = evidence
         self.tools = self._build_tools()
         self.reset()
 
@@ -113,6 +160,7 @@ class PortfolioRecorder:
         self.fund_name_hint: str | None = None  # used when the agent never calls record_fund
         self.source_url: str | None = None
         self.errors: list[str] = []
+        self.finished = False
         self._companies: dict[str, StartupInfo] = {}
 
     @property
@@ -185,16 +233,50 @@ class PortfolioRecorder:
             errors=errors,
         )
 
+    def check_evidence(self, companies: list[StartupInfo]) -> tuple[list[StartupInfo], list[str]]:
+        """Keep companies whose name appears on a page that was read.
+
+        Websites not seen on any page are dropped rather than rejecting the
+        company. Returns (accepted, problems).
+        """
+        if self.evidence is None:
+            return companies, []
+        if self.evidence.pages_read == 0:
+            return [], ["No page has been read yet. Read the portfolio page first, "
+                        "then record only companies listed on it."]
+        accepted, problems = [], []
+        for company in companies:
+            if not self.evidence.contains(company.name):
+                problems.append(
+                    f"'{company.name}' does not appear on any page you have read. "
+                    f"Record only companies you actually saw."
+                )
+                continue
+            domain = _domain(company.website)
+            if domain and not self.evidence.contains(domain):
+                logger.info("Dropping unseen website %s for %s", company.website, company.name)
+                company = company.model_copy(update={"website": None})
+            accepted.append(company)
+        return accepted, problems
+
     def _build_tools(self) -> list[Any]:
         @function_tool(strict_mode=False)
         def record_fund(fund_name: str, portfolio_url: str = "") -> str:
             """Save the fund's name and the URL of its portfolio page."""
+            if self.evidence is not None and not self.evidence.contains(fund_name):
+                return json.dumps({
+                    "ok": False,
+                    "error": f"'{fund_name}' does not appear on any page you have read. "
+                             f"Read the fund's site first.",
+                })
             self.set_fund(fund_name, portfolio_url or None)
             logger.info("Recorded fund: %s (%s)", self.fund_name, self.source_url)
             return json.dumps({"ok": True, "fund_name": self.fund_name})
 
         async def _record_companies(ctx: Any, raw_args: str) -> str:
             companies, problems = parse_companies_args(raw_args)
+            companies, unseen = self.check_evidence(companies)
+            problems += unseen
             added, merged = self.add_companies(companies)
             logger.info(
                 "Recorded companies: %d new, %d merged, %d total, %d problem(s)",
@@ -214,7 +296,7 @@ class PortfolioRecorder:
             name="record_companies",
             description=(
                 "Save portfolio companies found on the page you just read. Call it "
-                "right after reading each portfolio page, with at most 25 companies "
+                "right after reading each portfolio page, with at most 15 companies "
                 "per call; call it again for the rest. Repeating a company merges "
                 "new details."
             ),
@@ -251,6 +333,10 @@ class PortfolioRecorder:
         @function_tool(strict_mode=False)
         def finish(summary: str = "") -> str:
             """Call when the portfolio listing is complete. Ends the run."""
+            if self.evidence is not None and self.evidence.pages_read == 0:
+                return ("Not finished: you have not read any page yet. "
+                        "Use navigate_to_url on the fund's website first.")
+            self.finished = True
             logger.info("Agent finished: %s", summary)
             return "finished"
 
