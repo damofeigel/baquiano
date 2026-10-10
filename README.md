@@ -272,7 +272,7 @@ All settings are read from `.env` (see `.env.example`).
 | `VLLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI-compatible endpoint (vLLM). |
 | `VLLM_MODEL` | `mistralai/Mistral-7B-Instruct-v0.3` | Model name as served by vLLM, e.g. `meta-llama/Llama-3.1-8B-Instruct`. |
 | `API_KEY` | `not-needed` | API key for the endpoint (`not-needed` for local vLLM). |
-| `LLM_TOOL_CHOICE` | *(empty)* | Empty lets the server decide. `required` makes vLLM force every reply to be a valid tool call matching the tool schemas, so lists can't be sent as strings and tool-call JSON can't be malformed. Needs a vLLM version that supports it; leave it empty if requests fail. |
+| `LLM_TOOL_CHOICE` | *(empty)* | Leave empty with Llama 3.1 8B. `required` makes vLLM force every reply into the tool schemas, but with this model it skipped opening the site and emitted 50+ tool calls per reply until `max_tokens`. It may suit other models; when set, `parallel_tool_calls=false` is sent too. |
 | `LLM_TEMPERATURE` | `0.0` | Sampling temperature. |
 | `LLM_MAX_TOKENS` | `4096` | Max output tokens per model call. Keep it well below `--max-model-len`: vLLM rejects requests where prompt + `max_tokens` exceeds it. |
 | `PORTFOLIO_MODE` | `hybrid` | Default mode for the portfolio agent: `hybrid`, `deterministic` or `agent`. |
@@ -380,7 +380,13 @@ vLLM is using an old chat template. Start it with `--chat-template` pointing to 
 The model's tool call was cut off at `LLM_MAX_TOKENS`, usually a `record_companies` call with too many companies. The agent recovers automatically (`Unreadable tool call … salvaged N companies` in the log). If it happens often, lower the batch size in the prompt or raise `LLM_MAX_TOKENS`, as long as it stays below `--max-model-len`.
 
 **vLLM log: `Expecting ',' delimiter` / model sends `"companies": "[{\"name\"…"`**
-The model sent the company list as a JSON string instead of an array, and an unescaped quote broke it. Set `LLM_TOOL_CHOICE=required` so vLLM forces replies to match the tool schemas.
+The model sent the company list as a JSON string instead of an array, and an unescaped quote broke it. The agent recovers the complete companies from it (`Unreadable tool call … salvaged N companies`) and continues. `LLM_TOOL_CHOICE=required` would prevent it in principle, but with Llama 3.1 8B it causes worse problems (see below).
+
+**Log: `Dropped 50 extra tool call(s)` and replies taking minutes, with `LLM_TOOL_CHOICE=required`**
+With a forced tool choice, vLLM accepts any number of tool calls per reply, and Llama 3.1 8B keeps adding calls until `max_tokens`. In testing it also skipped opening the site. Set `LLM_TOOL_CHOICE=` (empty).
+
+**`ModelBehaviorError: … finish_reason='length' but produced no assistant text, tool call, or refusal`**
+A reply hit `LLM_MAX_TOKENS` before any tool call was complete. The agent now recovers: it tells the model to send exactly one tool call, along with the companies already saved, and continues (up to 3 times, then it ends with an error instead of crashing).
 
 **Log: `0 new, N merged` repeated, then the run finishes early**
 The model lost track of where it was in the list. The reply to a batch with nothing new, and the note sent after a cut-off call, now list the companies already saved, so it can continue from there.

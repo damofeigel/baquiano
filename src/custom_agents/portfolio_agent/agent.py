@@ -8,7 +8,9 @@ import openai
 from agents import (
     Agent,
     AgentsException,
+    ItemHelpers,
     MaxTurnsExceeded,
+    ModelBehaviorError,
     ModelSettings,
     Runner,
     ToolsToFinalOutputResult,
@@ -39,6 +41,10 @@ RECOVERY_NOTE = (
     "list, using smaller record_companies calls: at most 10 companies each, "
     "`companies` as a JSON array (not a string), one short sentence per "
     "description. Then call finish."
+)
+LENGTH_NOTE = (
+    "Your last reply was too long and was cut off before any tool call could "
+    "be read. Reply with exactly ONE tool call. {saved_names} Continue from there."
 )
 MAX_PROMPT_NAMES_CHARS = 3_000
 
@@ -99,6 +105,10 @@ class PortfolioAgent:
                 # "required" makes vLLM force output to the tool schemas: no
                 # lists sent as strings, no malformed JSON.
                 tool_choice=config.LLM_TOOL_CHOICE or None,
+                # With a forced tool_choice, vLLM builds an array of calls with no
+                # length limit; Llama 3.1 then emitted 50+ calls per reply. False
+                # asks for one call (only the first is executed anyway).
+                parallel_tool_calls=False if config.LLM_TOOL_CHOICE else None,
             ),
             # The SDK otherwise resets tool_choice to "auto" after the first tool
             # call. Safe to keep: runs end on an accepted finish() or max_turns.
@@ -185,6 +195,26 @@ class PortfolioAgent:
                     f"the portfolio may be incomplete."
                 )
                 return
+            except ModelBehaviorError as exc:
+                # A reply that hit max_tokens before any tool call was complete:
+                # vLLM returns nothing usable and the SDK raises. Recover like an
+                # unreadable tool call instead of failing the whole fund.
+                if "finish_reason='length'" not in str(exc) or exc.run_data is None:
+                    if not self.recorder.companies:
+                        raise
+                    logger.error("Worker failed; keeping recorded results", exc_info=True)
+                    self.recorder.add_error(f"Run stopped early: {type(exc).__name__}: {exc}")
+                    return
+                turns_left -= len(exc.run_data.raw_responses) + 1  # +1: the cut-off reply
+                logger.warning("Reply cut off at max_tokens with no tool call; %d turns left", turns_left)
+                if turns_left <= 0:
+                    break
+                history = ItemHelpers.input_to_new_input_list(exc.run_data.input) + [
+                    item.to_input_item() for item in exc.run_data.new_items
+                ]
+                note = LENGTH_NOTE.format(saved_names=self.recorder.saved_names_note())
+                run_input = history + [{"role": "user", "content": note}]
+                continue
             except (AgentsException, openai.APIError) as exc:
                 if not self.recorder.companies:
                     raise

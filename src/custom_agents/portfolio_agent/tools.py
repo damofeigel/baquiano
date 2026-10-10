@@ -148,6 +148,18 @@ class BrowserTools:
                         method, value["original_length"], MAX_HTML_CHARS, elapsed,
                     )
             result = self._json(value)
+            if method in _PAGE_METHODS and (
+                (isinstance(page_url, str) and page_url.startswith("about:")) or not result.strip()
+            ):
+                # Not a page read: the browser's blank start page, or a page with
+                # no readable text. Counting it would switch off the "read a
+                # page first" guards, and the model gets a clear next step.
+                logger.info("Tool call OK: %s — no page content (%s)", method, page_url)
+                if isinstance(page_url, str) and page_url.startswith("about:"):
+                    message = "No page is open yet. Use navigate_to_url with the fund's website first."
+                else:
+                    message = "This page has no readable text. Try search_current_page, scroll_page or get_current_page_html."
+                return json.dumps({"error": message, "operation": method})
             if method in _EVIDENCE_METHODS:
                 self.evidence.add(
                     result, is_page=method in _PAGE_METHODS,

@@ -11,7 +11,7 @@ import json
 
 import pytest
 from agents import (
-    Agent, Model, ModelResponse, 
+    Agent, Model, ModelBehaviorError, ModelResponse,
     Runner, ToolsToFinalOutputResult, 
     Usage, function_tool
 )
@@ -129,6 +129,9 @@ def test_plain_text_replies_are_not_treated_as_broken_calls():
 
 # --- Real SDK loop with a scripted model ----------------------------------------
 
+LENGTH = "<reply cut off at max_tokens>"
+
+
 class ScriptedModel(Model):
     """Returns one pre-written tool call (or a str: plain text reply) per turn."""
 
@@ -143,6 +146,12 @@ class ScriptedModel(Model):
         self.settings.append(model_settings)
         step = self.calls[self.turns]
         self.turns += 1
+        if step == LENGTH:
+            # What OpenAIChatCompletionsModel raises when vLLM hits max_tokens mid-call
+            raise ModelBehaviorError(
+                "Chat Completions response terminated with finish_reason='length' "
+                "but produced no assistant text, tool call, or refusal."
+            )
         if isinstance(step, str):
             items = [ResponseOutputMessage(
                 id=f"msg_{self.turns}", type="message", role="assistant", status="completed",
@@ -433,11 +442,13 @@ def test_saved_names_note_is_capped():
 
 # --- tool_choice ------------------------------------------------------------------
 
-@pytest.mark.parametrize("setting, expected_choice, expected_reset", [
-    ("", None, True),
-    ("required", "required", False),
+@pytest.mark.parametrize("setting, expected_choice, expected_reset, expected_parallel", [
+    ("", None, True, None),
+    ("required", "required", False, False),
 ])
-def test_tool_choice_setting_is_sent_on_every_turn(monkeypatch, tmp_path, setting, expected_choice, expected_reset):
+def test_tool_choice_setting_is_sent_on_every_turn(
+    monkeypatch, tmp_path, setting, expected_choice, expected_reset, expected_parallel,
+):
     monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(agent_module.config, "LLM_TOOL_CHOICE", setting)
     model = ScriptedModel([
@@ -454,3 +465,63 @@ def test_tool_choice_setting_is_sent_on_every_turn(monkeypatch, tmp_path, settin
     assert portfolio_agent._worker.reset_tool_choice is expected_reset
     # Not just the first turn: the SDK would reset it to auto after a tool call
     assert [s.tool_choice for s in model.settings] == [expected_choice] * 3
+    assert {s.parallel_tool_calls for s in model.settings} == {expected_parallel}
+
+
+
+# --- Replies cut off with no usable output ------------------------------------------
+
+def test_agent_recovers_from_reply_cut_off_with_no_tool_call(monkeypatch, tmp_path):
+    """Replays the crash: finish_reason='length' with nothing usable raised ModelBehaviorError."""
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
+    model = ScriptedModel([
+        ("record_fund", {"fund_name": "GRIDX"}),
+        ("record_companies", {"companies": ["Alkemio"]}),
+        LENGTH,                                          # used to crash the whole fund
+        ("record_companies", {"companies": ["Antarka"]}),
+        ("finish", {}),
+    ])
+    portfolio_agent = _agent_with_model(monkeypatch, model, page_text=GRIDX_PAGE)
+    try:
+        result = asyncio.run(portfolio_agent.run("https://gridx.example", mode="agent", max_turns=10))
+    finally:
+        portfolio_agent.close()
+
+    assert sorted(s.name for s in result.startups) == ["Alkemio", "Antarka"]
+    assert result.errors == []
+    resumed = json.dumps(model.inputs[3], default=str)
+    assert "Reply with exactly ONE tool call" in resumed
+    assert "Saved so far (1): Alkemio" in resumed
+    assert "record_fund" in resumed                     # earlier history kept
+
+
+def test_repeated_cut_offs_end_with_an_error_not_a_crash(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
+    model = ScriptedModel([LENGTH] * (agent_module.MAX_RECOVERIES + 1))
+    portfolio_agent = _agent_with_model(monkeypatch, model, page_text=GRIDX_PAGE)
+    try:
+        result = asyncio.run(portfolio_agent.run("https://gridx.example", mode="agent", max_turns=10))
+    finally:
+        portfolio_agent.close()
+
+    assert result.startups == []
+    assert any("repeatedly cut off" in e for e in result.errors)
+
+
+# --- Blank start page is not a page read ------------------------------------------
+
+def test_blank_start_page_is_not_counted_as_read():
+    """Replays the run that began with get_current_page_content on about:blank."""
+    from types import SimpleNamespace
+    from src.custom_agents.portfolio_agent.tools import BrowserTools
+
+    bt = BrowserTools()
+    blank = SimpleNamespace(url="about:blank", plain_text="")
+    bt._browser = SimpleNamespace(get_clean_content=lambda: blank, page=blank, close=lambda: None)
+    try:
+        reply = json.loads(bt._invoke_sync("get_clean_content"))
+    finally:
+        bt.close()
+
+    assert "No page is open yet" in reply["error"]
+    assert bt.evidence.pages_read == 0
