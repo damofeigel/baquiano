@@ -90,7 +90,7 @@ def tools_module(monkeypatch):
             self._record("go_to", url)
             return FakePageContent()
 
-        def get_clean_content(self):
+        def get_clean_content(self, part=1):
             self._record("get_clean_content")
             return FakePageContent()
 

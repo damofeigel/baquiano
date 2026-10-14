@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
+from difflib import SequenceMatcher
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -140,6 +142,61 @@ def _domain(url: str | None) -> str | None:
     return host.removeprefix("www.") or None
 
 
+def _same_site(a: str | None, b: str | None) -> bool:
+    da, db = _domain(a), _domain(b)
+    return bool(da and db and (da == db or da.endswith("." + db) or db.endswith("." + da)))
+
+
+def _ascii_key(text: str) -> str:
+    """Lowercase letters and digits only, accents removed ("BioClé" -> "biocle")."""
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+# Domain endings stripped before comparing a domain with a company name
+_DOMAIN_ENDINGS = {
+    "com", "net", "org", "io", "co", "ai", "bio", "tech", "app", "dev", "info",
+    "life", "xyz", "health", "earth", "farm", "ar", "uy", "cl", "br", "mx", "es",
+}
+
+
+def website_matches_name(name: str, website: str) -> bool:
+    """True if the website's main domain label plausibly belongs to the name.
+
+    They must share a distinctive chunk: 5 characters, or the whole of a
+    shorter name/label ("Eywa" ~ eywa.bio). Catches websites taken from a
+    neighbouring company ("Bioplastix" -> bitgenia.com) while keeping brand
+    variants ("Algaebio+" -> algaebiomas.com, "Tomorrow" -> tomorrowfoods.com.ar).
+    """
+    labels = (_domain(website) or "").split(".")
+    while len(labels) > 1 and (labels[-1] in _DOMAIN_ENDINGS or len(labels[-1]) <= 3):
+        labels.pop()
+    site, company = _ascii_key("".join(labels)), _ascii_key(name)
+    needed = min(5, len(site), len(company))
+    if needed == 0:
+        return True
+    match = SequenceMatcher(None, company, site, autojunk=False).find_longest_match(
+        0, len(company), 0, len(site)
+    )
+    return match.size >= needed
+
+
+# Page chrome that small models copy as company names ("JOIN US", "Visit our Linkedin profile")
+_NAVIGATION_NAME = re.compile(
+    r"^(join us|[uú]nete|contact( us)?|contacto|cont[aá]ctanos|follow us|s[ií]guenos|"
+    r"visit\b.*|visita\b.*|learn more|read more|see more|view more|ver m[aá]s|leer m[aá]s|"
+    r"apply( now)?|aplicar|postular|subscribe|suscr[ií]bete|newsletter|home|inicio|"
+    r"about( us)?|nosotros|qui[eé]nes somos|portfolio|portafolio|team|equipo|blog|news|"
+    r"noticias|cookie.*|privacy.*|privacidad|terms.*|t[eé]rminos.*|log ?in|sign ?up|"
+    r"website|sitio web|linkedin|instagram|twitter|facebook|youtube)$",
+    re.IGNORECASE,
+)
+
+
+def looks_like_navigation(name: str) -> bool:
+    return bool(_NAVIGATION_NAME.match(name.strip()))
+
+
 # finish() is refused this many times while the recorded portfolio page is
 # unopened, then accepted with an error so a stuck model can't burn every turn.
 MAX_FINISH_REFUSALS = 2
@@ -166,6 +223,7 @@ class PortfolioRecorder:
     def reset(self) -> None:
         self.fund_name: str | None = None
         self.fund_name_hint: str | None = None  # used when the agent never calls record_fund
+        self.site_url: str | None = None  # the fund URL being extracted; its links aren't company sites
         self.source_url: str | None = None
         self.errors: list[str] = []
         self.finished = False
@@ -189,6 +247,11 @@ class PortfolioRecorder:
                 continue
             if company.website and is_social_url(company.website):
                 logger.info("Dropping social-network website %s for %s", company.website, company.name)
+                company = company.model_copy(update={"website": None})
+            if company.website and (
+                _same_site(company.website, self.site_url) or _same_site(company.website, self.source_url)
+            ):
+                logger.info("Dropping fund's own link %s for %s", company.website, company.name)
                 company = company.model_copy(update={"website": None})
             key = self._find_existing(company)
             if key is None:
@@ -265,27 +328,33 @@ class PortfolioRecorder:
         )
 
     def check_evidence(self, companies: list[StartupInfo]) -> tuple[list[StartupInfo], list[str]]:
-        """Keep companies whose name appears on a page that was read.
+        """Vet companies the model recorded. Returns (accepted, problems).
 
-        Websites not seen on any page are dropped rather than rejecting the
-        company. Returns (accepted, problems).
+        Rejects page navigation used as a name and, when evidence is set,
+        names that appear on no page that was read. Websites are dropped
+        (company kept) when never seen on a page or when they don't plausibly
+        belong to the name, e.g. taken from the neighbouring card.
         """
-        if self.evidence is None:
-            return companies, []
-        if self.evidence.pages_read == 0:
+        if self.evidence is not None and self.evidence.pages_read == 0:
             return [], ["No page has been read yet. Read the portfolio page first, "
                         "then record only companies listed on it."]
         accepted, problems = [], []
         for company in companies:
-            if not self.evidence.contains(company.name):
+            if looks_like_navigation(company.name):
+                problems.append(f"'{company.name}' is site navigation, not a company name.")
+                continue
+            if self.evidence is not None and not self.evidence.contains(company.name):
                 problems.append(
                     f"'{company.name}' does not appear on any page you have read. "
                     f"Record only companies you actually saw."
                 )
                 continue
             domain = _domain(company.website)
-            if domain and not self.evidence.contains(domain):
+            if domain and self.evidence is not None and not self.evidence.contains(domain):
                 logger.info("Dropping unseen website %s for %s", company.website, company.name)
+                company = company.model_copy(update={"website": None})
+            elif domain and not website_matches_name(company.name, company.website or ""):
+                logger.info("Dropping website %s: doesn't match %s", company.website, company.name)
                 company = company.model_copy(update={"website": None})
             accepted.append(company)
         return accepted, problems

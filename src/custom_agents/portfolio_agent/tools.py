@@ -217,9 +217,10 @@ class BrowserTools:
             return await self._invoke("go_to", url)
 
         @function_tool(strict_mode=False)
-        async def get_current_page_content() -> str:
-            """Return cleaned structured content for the currently open page."""
-            return await self._invoke("get_clean_content")
+        async def get_current_page_content(part: int = 1) -> str:
+            """Return the current page's text. Long pages come in parts: read part 2, 3...
+            when the text ends with "The page continues"."""
+            return await self._invoke("get_clean_content", part=part)
 
         @function_tool(strict_mode=False)
         async def get_page_content_from_url(url: str) -> str:

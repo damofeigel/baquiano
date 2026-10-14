@@ -148,6 +148,7 @@ class PortfolioAgent:
         if mode not in MODES:
             raise ValueError(f"Unknown mode {mode!r}; expected one of {MODES}")
         self.recorder.reset()
+        self.recorder.site_url = url
         self.browser_tools.evidence.reset()
 
         prepass: PrepassResult | None = None

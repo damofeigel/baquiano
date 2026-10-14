@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from src.core import config
 
 # Data model & Config
@@ -18,7 +18,9 @@ class PageContent:
     headings: list[str]          # h1–h4 text, in document order
     paragraphs: list[str]        # visible content text blocks (p, li)
     links: list[dict[str, str]]  # [{text, href}] – absolute URLs, deduplicated
-    plain_text: str              # formatted markdown summary capped to max_text_chars
+    plain_text: str              # page in document order (one part of it), capped to max_text_chars
+    part: int = 1                # which part of a long page plain_text holds
+    total_parts: int = 1
 
     def __str__(self) -> str:
         return self.plain_text
@@ -31,6 +33,8 @@ class PageContent:
             "paragraphs": self.paragraphs,
             "links": self.links,
             "plain_text": self.plain_text,
+            "part": self.part,
+            "total_parts": self.total_parts,
         }
 
 
@@ -59,18 +63,92 @@ LOAD_MORE_RE = re.compile(
 )
 
 
-# Core extraction helper
+# Core extraction helpers
+
+_BLOCK_TAGS = [
+    "p", "div", "li", "ul", "ol", "section", "article", "header", "footer", "nav",
+    "main", "aside", "table", "tr", "thead", "tbody", "dl", "dt", "dd", "figure",
+    "figcaption", "blockquote", "form", "address",
+]
+_HEADING_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6"]
+_SKIP_HREF = ("#", "javascript:", "mailto:", "tel:")
+
+
+def _document_text(soup: BeautifulSoup, base_url: str) -> str:
+    """Render the page as text in document order (mutates soup).
+
+    Links stay inline as [text](url) and headings become "### text", so a
+    card reads as one block: name, description, then its links.
+    """
+    for a in soup.find_all("a", href=True):
+        raw = str(a.get("href") or "").strip()
+        if not raw or raw.startswith(_SKIP_HREF):
+            a.unwrap()
+            continue
+        href = (urljoin(base_url, raw) if base_url else raw).split("#")[0]
+        if a.find(_BLOCK_TAGS + _HEADING_TAGS):
+            # A whole card wrapped in one link: keep its content, link after it
+            a.append(NavigableString(f"\n[Link]({href})\n"))
+            a.unwrap()
+            continue
+        label = a.get_text(" ", strip=True)
+        for attr in ("aria-label", "title"):
+            value = a.get(attr)
+            if not label and isinstance(value, str):
+                label = value.strip()
+        label = label.strip().strip("[]").strip() or href
+        a.replace_with(NavigableString(f" [{label}]({href}) "))
+
+    for h in soup.find_all(_HEADING_TAGS):
+        text = h.get_text(" ", strip=True)
+        h.replace_with(NavigableString(f"\n{'#' * int(h.name[1])} {text}\n" if text else "\n"))
+    for br in soup.find_all("br"):
+        br.replace_with(NavigableString("\n"))
+    for el in soup.find_all(_BLOCK_TAGS):
+        el.insert_before(NavigableString("\n"))
+        el.insert_after(NavigableString("\n"))
+
+    lines: list[str] = []
+    for line in (soup.body or soup).get_text().splitlines():
+        line = re.sub(r"\s+", " ", line).strip()
+        if line and (not lines or line != lines[-1]):
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def split_into_parts(text: str, size: int) -> list[str]:
+    """Split text into parts of at most `size` chars, on line boundaries."""
+    parts: list[str] = []
+    current: list[str] = []
+    length = 0
+    for line in text.split("\n"):
+        line = line[:size]
+        if current and length + len(line) + 1 > size:
+            parts.append("\n".join(current))
+            current, length = [], 0
+        current.append(line)
+        length += len(line) + 1
+    if current:
+        parts.append("\n".join(current))
+    return parts or [""]
+
 
 def extract_page_content(
     html: str,
     base_url: str = "",
     config: BrowserConfig | None = None,
+    part: int = 1,
 ) -> PageContent:
     """Parse raw HTML and return clean, structured PageContent.
 
-    Preserves image alt text (essential for logo grids on VC portfolios),
-    resolves relative links against base_url, extracts list items, and enforces
-    token-friendly limits.
+    plain_text renders the page in document order with links inline, so each
+    card's name, description and URL stay together. (Grouping headings, text
+    and links into separate lists made models pair them by position, and one
+    skipped entry shifted every pair after it.) Pages longer than
+    max_text_chars are split into parts; `part` selects which one.
+
+    Preserves image alt text (essential for logo grids on VC portfolios) and
+    resolves relative links against base_url.
     """
     cfg = config or browser_config
     soup = BeautifulSoup(html, "html.parser")
@@ -162,36 +240,25 @@ def extract_page_content(
         if len(links) >= cfg.max_links:
             break
 
-    # 8. Plain-text assembly (formatted markdown) within max_text_chars.
-    # Links carry company websites and pagination, so they get up to half the
-    # budget and the content section is truncated first.
-    truncated_note = "\n...[truncated for length]"
-    budget = cfg.max_text_chars
-
-    def _fit(text: str, limit: int) -> str:
-        if len(text) <= limit:
-            return text
-        return text[: max(0, limit - len(truncated_note))] + truncated_note
-
-    header_parts: list[str] = []
-    if title:
-        header_parts.append(f"# {title}")
-    if headings:
-        header_parts.append("## Headings\n" + "\n".join(f"- {h}" for h in headings))
-    # Headings often hold the company names on portfolio pages
-    header = _fit("\n\n".join(header_parts), budget // 3)
-
-    links_block = ""
-    if links:
-        link_lines = "\n".join(f"- [{l['text']}]({l['href']})" for l in links)
-        links_block = _fit(f"## Links\n{link_lines}", budget // 2)
-
-    content_block = ""
-    if paragraphs:
-        content_budget = budget - len(header) - len(links_block) - 4  # section separators
-        content_block = _fit("## Content\n" + "\n\n".join(paragraphs), content_budget)
-
-    plain_text = "\n\n".join(part for part in (header, content_block, links_block) if part)
+    # 8. Plain text in document order, split into parts that fit the budget
+    body = _document_text(soup, base_url)
+    header = f"# {title}\n" if title else ""
+    parts = split_into_parts(body, max(500, cfg.max_text_chars - len(header) - 200))
+    total = len(parts)
+    if not 1 <= part <= total:
+        raise ValueError(f"This page has {total} part(s); part must be between 1 and {total}.")
+    if not body:
+        plain_text = ""  # nothing readable (e.g. about:blank); a title alone is not content
+    else:
+        plain_text = header
+        if total > 1:
+            plain_text += f"[Part {part} of {total}]\n"
+        plain_text += parts[part - 1]
+        if part < total:
+            plain_text += (
+                f"\n\n[Part {part} of {total}. The page continues: call "
+                f"get_current_page_content with part={part + 1}.]"
+            )
 
     return PageContent(
         url=base_url,
@@ -200,6 +267,8 @@ def extract_page_content(
         paragraphs=paragraphs,
         links=links,
         plain_text=plain_text,
+        part=part,
+        total_parts=total,
     )
 
 
@@ -282,11 +351,11 @@ class BrowserManager:
         target_page = page or self.page
         return target_page.content()
 
-    def get_clean_content(self, page: Page | None = None) -> PageContent:
+    def get_clean_content(self, page: Page | None = None, part: int = 1) -> PageContent:
         target_page = page or self.page
         html = target_page.content()
         url = target_page.url
-        return extract_page_content(html, base_url=url, config=self.config)
+        return extract_page_content(html, base_url=url, config=self.config, part=part)
 
     def get_clean_content_from_url(self, url: str) -> PageContent:
         prev_page = self._active_page

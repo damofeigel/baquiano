@@ -212,8 +212,10 @@ Small local models such as Llama 3.1 8B fail in characteristic ways. Each of the
 | Calls `finish` before reading anything | `finish` is refused until a page has been read. |
 | Records the portfolio URL but never opens it, then finishes with only the homepage's featured companies | `record_fund` replies with the next step ("Open …/portfolio"), and `finish` is refused while that page is unopened. After 2 refusals it's accepted with an error, so a stuck model can't use up every turn. A link that fails to load counts as tried. |
 | Uses a LinkedIn or other social profile as the company website | Social-network links are removed in code, whichever path the company came from. |
+| Attaches a neighbouring company's website or description (one skipped card shifts every pair after it) | Page text follows the page's layout, so each card's name, description and links sit together instead of in separate lists. Websites whose domain doesn't plausibly match the company name are removed. On GridX this removed 57 of 59 shifted websites and none of the 78 correct ones. Links to the fund's own site are removed too. |
+| Saves page navigation as companies ("JOIN US", "Visit our Linkedin profile") | Navigation text (English and Spanish) is rejected as a company name. |
 | A long `record_companies` call is cut off at `max_tokens`, so vLLM returns it as plain text and the run would end quietly | Complete companies are recovered from the cut-off text, and the model is told to continue in smaller batches (up to 3 times). |
-| Context overflow on long runs | Page text is capped, and only the 2 most recent page reads stay in the history. Older ones are replaced with a short note. |
+| Context overflow on long runs | Long pages are split into parts the model reads one at a time (`get_current_page_content(part=N)`), and only the 2 most recent page reads stay in the history. Older ones are replaced with a short note. |
 | Writes "not found" or "N/A" instead of null | Converted to null. Implausible years and formatted amounts are cleaned up. |
 
 The evidence check confirms a name **appeared** on a page, not that it is a portfolio company. Deciding that is still the agent's job (or the pre-pass's filters).
@@ -279,8 +281,8 @@ All settings are read from `.env` (see `.env.example`).
 | `HEADLESS` | `true` | Run Chromium without a window. Set `false` to watch it browse. |
 | `TIMEOUT` | `20000` | Page load timeout (ms). |
 | `WAIT_AFTER_LOAD` | `1000` | Extra wait after load (ms) for dynamic content. |
-| `MAX_TEXT_CHARS` | `18000` | Max characters of page text sent to the model per page. |
-| `MAX_LINKS` | `120` | Max links extracted per page. |
+| `MAX_TEXT_CHARS` | `18000` | Max characters of page text per part. Longer pages are split into parts; nothing is cut off. |
+| `MAX_LINKS` | `120` | Max links in `PageContent.links`. The model sees links inline in the page text, which this doesn't limit. |
 | `MAX_HTML_CHARS` | `12000` | Max raw HTML returned by `get_current_page_html`. |
 | `OUTPUT_DIR` | `output` | Results folder, relative to the project root. If only the older `OUTPUT_FILE` is set, its folder is used. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` also logs page contents and the model's final messages. |

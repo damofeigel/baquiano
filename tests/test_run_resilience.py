@@ -148,19 +148,75 @@ def test_trims_all_but_the_most_recent_page_outputs():
 
 # --- Page text budget ---------------------------------------------------------
 
-def test_long_content_is_truncated_before_links():
+def test_long_pages_are_split_into_parts_without_losing_anything():
     cfg = BrowserConfig()
     cfg.max_text_chars = 2_000
-    cfg.max_links = 10
     paragraphs = "".join(f"<p>Paragraph {i} " + "lorem " * 20 + "</p>" for i in range(100))
     links = "".join(f'<a href="https://startup{i}.example">Startup {i}</a>' for i in range(10))
     html = f"<html><head><title>Fund</title></head><body>{paragraphs}{links}</body></html>"
 
-    page = extract_page_content(html, base_url="https://fund.example", config=cfg)
+    first = extract_page_content(html, base_url="https://fund.example", config=cfg)
+    parts = [extract_page_content(html, base_url="https://fund.example", config=cfg, part=n)
+             for n in range(1, first.total_parts + 1)]
 
-    assert len(page.plain_text) <= cfg.max_text_chars
-    assert "https://startup9.example" in page.plain_text
-    assert "[truncated for length]" in page.plain_text
+    assert first.total_parts > 1
+    assert all(len(p.plain_text) <= cfg.max_text_chars for p in parts)
+    assert "call get_current_page_content with part=2" in first.plain_text
+    assert "page continues" not in parts[-1].plain_text
+    everything = "\n".join(p.plain_text for p in parts)
+    assert all(f"Paragraph {i} " in everything for i in range(100))
+    assert all(f"[Startup {i}](https://startup{i}.example)" in everything for i in range(10))
+
+
+def test_part_out_of_range_is_a_clear_error():
+    with pytest.raises(ValueError, match="has 1 part"):
+        extract_page_content("<html><body><p>Hi there</p></body></html>", part=2)
+
+
+# Shaped like the GridX portfolio: every card has a logo, a name, a description
+# and usually a link. CASPR's link is LinkedIn, Werken Vac has none.
+GRID_HTML = """<html><head><title>Portfolio</title></head><body>
+<div class="grid">
+  <div class="card"><img alt="Alkemio"><h3>Alkemio</h3><div>Rare earth separation</div>
+    <a href="https://alkemio.tech">Visit Website</a></div>
+  <div class="card"><img alt="CASPR"><h3>CASPR</h3><div>CRISPR diagnostics</div>
+    <a href="https://www.linkedin.com/company/casprbio/">Visit Website</a></div>
+  <div class="card"><img alt="Werken Vac"><h3>Werken Vac</h3><div>RNA vaccine for fish</div></div>
+  <div class="card"><img alt="Zavia Bio"><h3>Zavia Bio</h3><div>Protein design platform</div>
+    <a href="https://www.zaviabio.com">Visit Website</a></div>
+</div>
+<footer><a href="/contact-us">JOIN US</a></footer>
+</body></html>"""
+
+
+def test_cards_stay_together_in_document_order():
+    text = extract_page_content(GRID_HTML, base_url="https://fund.example/portfolio").plain_text
+
+    # Each card is one block: name, then its description, then its own link
+    assert "### Werken Vac\nRNA vaccine for fish\n[Logo: Zavia Bio]\n### Zavia Bio" in text
+    assert ("### Zavia Bio\nProtein design platform\n"
+            "[Visit Website](https://www.zaviabio.com)") in text
+    assert "### Alkemio\nRare earth separation\n[Visit Website](https://alkemio.tech)" in text
+    # Relative links are resolved; the old grouped sections are gone
+    assert "[JOIN US](https://fund.example/contact-us)" in text
+    assert "## Links" not in text and "## Headings" not in text
+
+
+def test_div_text_is_included():
+    html = "<html><body><div class='name'>Puna Bio</div><span>Extremophile bacteria</span></body></html>"
+    text = extract_page_content(html).plain_text
+    assert "Puna Bio" in text and "Extremophile bacteria" in text
+
+
+def test_card_wrapped_in_a_link_keeps_the_link():
+    html = ('<html><body><a href="https://puna.bio"><div><h3>Puna Bio</h3>'
+            '<p>Extremophile bacteria</p></div></a></body></html>')
+    text = extract_page_content(html).plain_text
+    assert "### Puna Bio\nExtremophile bacteria\n[Link](https://puna.bio)" in text
+
+
+def test_blank_page_has_no_text():
+    assert extract_page_content("<html><head></head><body></body></html>").plain_text == ""
 
 
 # --- Output files -------------------------------------------------------------

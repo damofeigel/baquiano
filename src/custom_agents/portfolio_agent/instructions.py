@@ -37,7 +37,13 @@ parser, follow the steps in the task message instead of starting over.
    Follow the actual link URLs from the page. Never invent URLs.
 3. On the portfolio page, collect every company: cards, grids, lists,
    tables, logos ("[Logo: Name]" is image alt text), and company links.
-   Then call record_companies.
+   Page text follows the page's layout: each company's name, description
+   and links appear together. Take a company's website and description only
+   from its own block, never from a neighbouring one. Then call
+   record_companies.
+   Long pages come in parts. If the text ends with "The page continues",
+   read the next part with get_current_page_content(part=N) and record its
+   companies too.
 4. If there is evidence of more companies (pagination, "next" links, tabs,
    category pages, "load more" / "ver más" buttons, lazy loading), reveal
    them with navigate_to_url, click_element, load_more or scroll_page, read

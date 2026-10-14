@@ -27,6 +27,8 @@ from src.custom_agents.portfolio_agent.models import StartupInfo
 from src.custom_agents.portfolio_agent.tools import Evidence, url_key
 from src.custom_agents.portfolio_agent.recorder import (
     MAX_FINISH_REFUSALS,
+    looks_like_navigation,
+    website_matches_name,
     RECORD_COMPANIES_SCHEMA,
     PortfolioRecorder,
     looks_like_broken_tool_call,
@@ -525,3 +527,69 @@ def test_blank_start_page_is_not_counted_as_read():
 
     assert "No page is open yet" in reply["error"]
     assert bt.evidence.pages_read == 0
+
+
+# --- Websites from the wrong card, fund links, navigation as names -----------------
+
+@pytest.mark.parametrize("name, website", [
+    # Correct pairs from GridX, including brand variants of the name
+    ("Algaebio+", "https://algaebiomas.com"),
+    ("Tomorrow", "https://tomorrowfoods.com.ar"),
+    ("Levya", "https://levyabio.com/"),
+    ("CellCo", "https://the-cellco.com"),
+    ("BioClé", "https://biocle.tech/"),
+    ("Eywa Biotech", "https://eywa.bio"),
+    ("Puna Bio", "https://puna.bio"),
+    ("Biodiversity Intelligence", "https://biodiversityintell.com"),
+    ("Hiamet S.A", "https://hiamet.com"),
+])
+def test_matching_websites_are_kept(name, website):
+    assert website_matches_name(name, website)
+
+
+@pytest.mark.parametrize("name, website", [
+    # Shifted pairs from the agent-mode run: each got the next card's website
+    ("Bioplastix", "https://bitgenia.com"),
+    ("BreakPET", "https://bsafebiotech.com"),
+    ("CellCo", "https://cellrep.bio"),
+    ("Enteria", "https://www.enzyva-bio.com/"),
+    ("Tomorrow", "https://ubique.bio"),
+    ("Syocin Bio", "https://tesabio.ai/"),
+])
+def test_websites_from_another_card_are_rejected(name, website):
+    assert not website_matches_name(name, website)
+
+
+def test_page_navigation_is_not_a_company_name():
+    for name in ["JOIN US", "Visit our Linkedin profile", "Visit our Instagram profile",
+                 "Contacto", "Ver más", "Síguenos"]:
+        assert looks_like_navigation(name), name
+    for name in ["Alkemio", "Visitly", "Tomorrow", "Contactless Labs"]:
+        assert not looks_like_navigation(name), name
+
+
+def test_agent_records_are_vetted_for_website_fit_fund_links_and_navigation():
+    """Replays the end of the agent-mode output against a page that shows them all."""
+    evidence = Evidence()
+    evidence.add(
+        "### Zavia Bio [Visit Website](https://zevbiotech.com) ### ZEV Biotech "
+        "[JOIN US](https://www.gridexponential.com/contact-us) Visit our Linkedin profile "
+        "### Tomorrow [Visit Website](https://ubique.bio) ### Puna Bio [Visit Website](https://puna.bio)",
+        is_page=True, url=PORTFOLIO,
+    )
+    rec = PortfolioRecorder(evidence=evidence)
+    rec.site_url = HOME
+    accepted, problems = rec.check_evidence([
+        StartupInfo(name="Zavia Bio", website="https://zevbiotech.com"),          # neighbour's site
+        StartupInfo(name="Tomorrow", website="https://ubique.bio"),               # neighbour's site
+        StartupInfo(name="Puna Bio", website="https://puna.bio"),                 # correct
+        StartupInfo(name="JOIN US"),                                              # navigation
+        StartupInfo(name="Visit our Linkedin profile"),                           # navigation
+    ])
+    rec.add_companies(accepted + [
+        StartupInfo(name="ZEV Biotech", website="https://www.gridexponential.com/contact-us"),
+    ])
+
+    websites = {c.name: c.website for c in rec.companies}
+    assert websites == {"Zavia Bio": None, "Tomorrow": None, "Puna Bio": "https://puna.bio", "ZEV Biotech": None}
+    assert sum("site navigation" in p for p in problems) == 2
