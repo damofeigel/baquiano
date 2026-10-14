@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup
+from bs4.element import NavigableString
 from src.core import config
 
 # Data model & Config
@@ -280,11 +281,15 @@ class BrowserManager:
     def __init__(self, config: BrowserConfig | None = None):
         self.config = config or browser_config
         self.playwright = sync_playwright().start()
-        self.browser: Browser = self.playwright.chromium.launch(headless=self.config.headless)
-        self.context: BrowserContext = self.browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800},
-        )
+        try:
+            self.browser: Browser = self.playwright.chromium.launch(headless=self.config.headless)
+            self.context: BrowserContext = self.browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 800},
+            )
+        except Exception:
+            self.playwright.stop()
+            raise
         self._active_page: Page | None = None
 
     def __enter__(self) -> BrowserManager:

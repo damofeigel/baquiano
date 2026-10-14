@@ -21,7 +21,7 @@ from openai.types.responses import (
     ResponseOutputText,
 )
 
-from src.core.llm import OneToolCallPerTurn
+from src.core.llm import OneToolCallPerTurn, clean_tool_name
 from src.custom_agents.portfolio_agent import agent as agent_module
 from src.custom_agents.portfolio_agent.models import StartupInfo
 from src.custom_agents.portfolio_agent.tools import Evidence, url_key
@@ -593,3 +593,31 @@ def test_agent_records_are_vetted_for_website_fit_fund_links_and_navigation():
     websites = {c.name: c.website for c in rec.companies}
     assert websites == {"Zavia Bio": None, "Tomorrow": None, "Puna Bio": "https://puna.bio", "ZEV Biotech": None}
     assert sum("site navigation" in p for p in problems) == 2
+
+
+# --- Tool names with chat-format residue (gpt-oss / harmony) ------------------------
+
+@pytest.mark.parametrize("raw, clean", [
+    ("finish<|channel|>", "finish"),
+    ("record_companies<|channel|>commentary", "record_companies"),
+    ("functions.navigate_to_url", "navigate_to_url"),
+    ("functions.finish<|channel|>commentary json", "finish"),
+    ("record_fund", "record_fund"),
+])
+def test_clean_tool_name(raw, clean):
+    assert clean_tool_name(raw) == clean
+
+
+def test_harmony_tool_names_reach_the_right_tools():
+    """Replays 'Tool finish<|channel|> not found in agent PortfolioFinderWorker'."""
+    model = ScriptedModel([
+        ("functions.navigate_to_url", {"url": PORTFOLIO}),
+        ("record_companies<|channel|>commentary", {"companies": ["Stämm", "Puna Bio"]}),
+        ("finish<|channel|>", {}),
+    ])
+    agent, rec = _guarded_agent(model)
+    asyncio.run(Runner.run(agent, "go", max_turns=5))
+
+    assert rec.finished
+    assert model.turns == 3
+    assert sorted(c.name for c in rec.companies) == ["Puna Bio", "Stämm"]
