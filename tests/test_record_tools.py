@@ -507,7 +507,7 @@ def test_repeated_cut_offs_end_with_an_error_not_a_crash(monkeypatch, tmp_path):
         portfolio_agent.close()
 
     assert result.startups == []
-    assert any("repeatedly cut off" in e for e in result.errors)
+    assert any("repeatedly replied without a usable tool call" in e for e in result.errors)
 
 
 # --- Blank start page is not a page read ------------------------------------------
@@ -621,3 +621,54 @@ def test_harmony_tool_names_reach_the_right_tools():
     assert rec.finished
     assert model.turns == 3
     assert sorted(c.name for c in rec.companies) == ["Puna Bio", "Stämm"]
+
+
+# --- Plain-text replies (gpt-oss answers in prose on its "final" channel) -----------
+
+def test_text_reply_is_followed_by_a_nudge_not_the_end_of_the_run():
+    """Replays the newtopia.vc run: the model read the page, then answered in text."""
+    model = ScriptedModel([
+        ("navigate_to_url", {"url": PORTFOLIO}),
+        "The portfolio includes Stämm and Puna Bio.",          # used to end the run
+        ("record_companies", {"companies": ["Stämm", "Puna Bio"]}),
+        ("finish", {}),
+    ])
+    agent, rec = _guarded_agent(model)
+    portfolio_agent = agent_module.PortfolioAgent.__new__(agent_module.PortfolioAgent)
+    portfolio_agent._worker, portfolio_agent.recorder = agent, rec
+    asyncio.run(portfolio_agent._run_worker("go", max_turns=10))
+
+    assert rec.finished
+    assert sorted(c.name for c in rec.companies) == ["Puna Bio", "Stämm"]
+    nudged = json.dumps(model.inputs[2], default=str, ensure_ascii=False)
+    assert "You replied with text instead of a tool call" in nudged
+    assert "The portfolio includes Stämm and Puna Bio." in nudged    # its reply is kept
+
+
+def test_repeated_text_replies_end_with_an_error():
+    model = ScriptedModel([("navigate_to_url", {"url": PORTFOLIO})] + ["Done."] * (agent_module.MAX_RECOVERIES + 1))
+    agent, rec = _guarded_agent(model)
+    portfolio_agent = agent_module.PortfolioAgent.__new__(agent_module.PortfolioAgent)
+    portfolio_agent._worker, portfolio_agent.recorder = agent, rec
+    asyncio.run(portfolio_agent._run_worker("go", max_turns=10))
+
+    assert not rec.finished
+    assert any("plain text" in e for e in rec.errors)
+
+
+def test_fund_named_from_the_page_when_agent_never_records_it(monkeypatch, tmp_path):
+    """Replays the newtopia.vc agent-mode run: companies saved, record_fund never called."""
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
+    model = ScriptedModel([
+        ("record_companies", {"companies": ["Alkemio"]}),
+        ("finish", {}),
+    ])
+    portfolio_agent = _agent_with_model(monkeypatch, model, page_text=GRIDX_PAGE)
+    portfolio_agent.browser_tools.evidence.site_name = "Newtopia VC"
+    try:
+        result = asyncio.run(portfolio_agent.run("https://newtopia.example", mode="agent", max_turns=5))
+    finally:
+        portfolio_agent.close()
+
+    assert result.fund_name == "Newtopia VC"
+    assert "Fund name was not identified." not in result.errors

@@ -241,3 +241,11 @@ def test_fund_slug_is_filesystem_safe():
     assert fund_slug("gridexponential.com") == "gridexponential.com"
     assert fund_slug("http://user@Fund.Example:8080/x?y=1") == "fund.example"
     assert fund_slug("not a url") == "not-a-url"
+
+
+def test_site_name_is_read_from_the_page():
+    html = ('<html><head><title>Newtopia Portfolio | 90 Latin American Startups</title>'
+            '<meta property="og:site_name" content="Newtopia VC"></head><body><p>Hi</p></body></html>')
+    page = extract_page_content(html)
+    assert page.site_name == "Newtopia VC"
+    assert page.title == "Newtopia Portfolio | 90 Latin American Startups"

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from src.custom_agents.portfolio_agent import agent as agent_module
 from src.custom_agents.portfolio_agent.agent import build_worker_prompt
 from src.custom_agents.portfolio_agent.heuristics import (
+    fund_name_from_title,
     extract_companies,
     find_next_page_link,
     find_portfolio_links,
@@ -161,3 +164,53 @@ def test_deterministic_mode_skips_the_llm(monkeypatch, tmp_path):
     assert result.source_url == BASE
     assert [s.name for s in result.startups] == ["Andes Bio"]
     assert result.errors == []
+
+
+# Shaped like newtopia.vc (WordPress/Elementor): every card shares core classes,
+# most add a per-card filter class, some have none; descriptions live only in the
+# logo alt text; exits are noted in the name.
+def _elementor_card(name, desc, filter_id=None, post_id=1):
+    extra = f" elementor-filter-{filter_id}" if filter_id else ""
+    return (
+        f'<article class="elementor-portfolio-item elementor-post post-{post_id} portfolio '
+        f'type-portfolio status-publish has-post-thumbnail{extra}">'
+        f'<a class="elementor-post__thumbnail__link" href="https://fund.example/portfolio/{post_id}/">'
+        f'<img alt="{name} – {desc} | Fund portfolio">'
+        f'<div class="elementor-portfolio-item__overlay"><h3>{name}</h3></div></a></article>'
+    )
+
+
+ELEMENTOR_HTML = _page(
+    '<div class="elementor-portfolio elementor-grid">'
+    + _elementor_card("Aviva", "Phygital neobank for emerging communities", 27, 1)
+    + _elementor_card("Humand", "Super app for deskless workers", None, 2)
+    + _elementor_card("Arkimedes", "Agentic AI for private equity", 34, 3)
+    + _elementor_card("IORQ", "Private credit orchestrator", 27, 4)
+    + _elementor_card("Roxom", "Bitcoin-native capital markets", 31, 5)
+    + _elementor_card("Lara (exit to Visma)", "People experience platform", 27, 6)
+    + "</div>"
+)
+
+
+def test_cards_with_optional_classes_stay_one_grid():
+    companies = extract_companies(ELEMENTOR_HTML, "https://fund.example/portfolio/")
+    assert [c.name for c in companies] == ["Aviva", "Humand", "Arkimedes", "IORQ", "Roxom", "Lara"]
+
+
+def test_descriptions_from_logo_alt_text_and_exit_notes():
+    by_name = {c.name: c for c in extract_companies(ELEMENTOR_HTML, "https://fund.example/portfolio/")}
+    assert by_name["Aviva"].description == "Phygital neobank for emerging communities"
+    assert by_name["Lara"].description == "People experience platform. Exit to Visma."
+    assert by_name["Aviva"].website is None   # the card links to the fund's own profile page
+
+
+@pytest.mark.parametrize("title, name", [
+    ("Newtopia Portfolio | 90 Latin American Startups", "Newtopia"),
+    ("GRIDX | Portfolio", "GRIDX"),
+    ("Portafolio | Fondo Andino", "Fondo Andino"),
+    ("Home - Kamay Ventures", "Kamay Ventures"),        # "Ventures" is part of the name
+    ("Our Portfolio – Acme Investments", "Acme Investments"),
+    ("Portfolio", None),
+])
+def test_fund_name_from_title(title, name):
+    assert fund_name_from_title(title) == name

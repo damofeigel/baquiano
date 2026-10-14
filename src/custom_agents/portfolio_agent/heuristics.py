@@ -133,20 +133,29 @@ def find_next_page_link(html: str, base_url: str, visited: set[str]) -> str | No
     return None
 
 
+_TITLE_PAGE_WORDS = {"portfolio", "portafolio", "home", "inicio", "our", "nuestro", "nuestros", "nuestras"}
+
+
+def fund_name_from_title(title: str) -> str | None:
+    """'Newtopia Portfolio | 90 Latin American Startups' -> 'Newtopia'."""
+    names = []
+    for part in re.split(r"\s[|\-–—·:]\s", title.strip()):
+        if _PORTFOLIO_RE.fullmatch(part):  # a whole part like "Portfolio" or "Startups"
+            continue
+        # Only strip page words: "Ventures" or "Investments" can be part of a fund's name
+        words = [w for w in part.split() if w.lower() not in _TITLE_PAGE_WORDS]
+        if words:
+            names.append(" ".join(words))
+    return names[0] if names else None
+
+
 def guess_fund_name(html: str) -> str | None:
     soup = BeautifulSoup(html, "html.parser")
     meta = soup.find("meta", attrs={"property": "og:site_name"})
     if meta and str(meta.get("content", "")).strip():
         return str(meta["content"]).strip()
     title = soup.find("title")
-    if not title:
-        return None
-    parts = [p.strip() for p in re.split(r"\s[|\-–—·:]\s", title.get_text(strip=True))]
-    parts = [
-        p for p in parts
-        if p and not _PORTFOLIO_RE.fullmatch(p) and p.lower() not in {"home", "inicio", "our portfolio", "nuestro portafolio"}
-    ]
-    return parts[0] if parts else None
+    return fund_name_from_title(title.get_text(strip=True)) if title else None
 
 
 # --- Card extraction ----------------------------------------------------------------
@@ -154,6 +163,52 @@ def guess_fund_name(html: str) -> str | None:
 def _signature(el: Tag) -> tuple[str, str]:
     classes = sorted(re.sub(r"\d+", "", c) for c in el.get("class", []))
     return el.name, " ".join(classes)
+
+
+_ALT_SEPARATOR = re.compile(r"\s[–—-]\s")
+_EXIT_NOTE = re.compile(r"^(.*?)\s*\(((?:exit|exited|acquired)\b[^)]*)\)\s*$", re.IGNORECASE)
+
+
+def _split_alt(alt: str) -> tuple[str, str | None]:
+    """'Aviva – Phygital neobank … | Newtopia VC portfolio' -> ('Aviva', 'Phygital neobank …')."""
+    parts = _ALT_SEPARATOR.split(alt, maxsplit=1)
+    if len(parts) == 1:
+        return alt, None
+    description = parts[1].split(" | ")[0].strip()
+    return parts[0].strip(), description or None
+
+
+def _class_set(el: Tag) -> frozenset[str]:
+    return frozenset(re.sub(r"\d+", "", c) for c in el.get("class", []))
+
+
+def _sibling_groups(children: list[Tag]) -> dict[tuple[str, str], list[Tag]]:
+    """Group sibling elements that are the same kind of card.
+
+    Siblings are grouped by tag and the classes most of them share, so per-card
+    extras don't split one grid into many groups. (WordPress/Elementor cards
+    carry classes like "elementor-filter-27" or a category tag on some cards
+    only; grouping by the exact class list found 13 of 70 cards on such a page.)
+    """
+    by_tag: dict[str, list[Tag]] = defaultdict(list)
+    for child in children:
+        by_tag[child.name].append(child)
+
+    groups: dict[tuple[str, str], list[Tag]] = defaultdict(list)
+    for tag, members in by_tag.items():
+        counts: dict[str, int] = defaultdict(int)
+        for member in members:
+            for cls in _class_set(member):
+                counts[cls] += 1
+        core = frozenset(c for c, n in counts.items() if n >= 0.6 * len(members))
+        for member in members:
+            # A card may lack an optional class (e.g. no filter category), so it
+            # needs most of the shared classes, not all. A different kind of
+            # element under the same parent shares few and keeps its own signature.
+            shared = len(core & _class_set(member)) / len(core) if core else 1.0
+            key = (tag, " ".join(sorted(core))) if shared >= 0.75 else _signature(member)
+            groups[key].append(member)
+    return groups
 
 
 def _clean_name(text: str) -> str | None:
@@ -177,7 +232,8 @@ def _card_name(card: Tag) -> str | None:
         return name
     imgs = [card] if card.name == "img" else card.find_all("img")
     for img in imgs:
-        if name := _clean_name(str(img.get("alt") or img.get("title") or "")):
+        alt, _ = _split_alt(str(img.get("alt") or img.get("title") or ""))
+        if name := _clean_name(alt):
             return name
     links = [card] if card.name == "a" else card.find_all("a")
     for a in links:
@@ -205,6 +261,11 @@ def _card_description(card: Tag, name: str) -> str | None:
         if t and t != name and len(t) > len(name) + 20
     ]
     if not texts:
+        # Some grids put the description only in the logo's alt text: "Name – description"
+        for img in ([card] if card.name == "img" else card.find_all("img")):
+            alt_name, description = _split_alt(str(img.get("alt") or ""))
+            if description and _clean_name(alt_name) == name:
+                return description[:MAX_DESCRIPTION_CHARS]
         return None
     text = " ".join(min(texts, key=len).split())  # innermost block, not a wrapper
     return text[:MAX_DESCRIPTION_CHARS]
@@ -232,10 +293,7 @@ def extract_companies(html: str, base_url: str) -> list[StartupInfo]:
         children = [c for c in parent.find_all(recursive=False) if isinstance(c, Tag)]
         if len(children) < 2:
             continue
-        by_sig: dict[tuple[str, str], list[Tag]] = defaultdict(list)
-        for child in children:
-            by_sig[_signature(child)].append(child)
-        for sig, siblings in by_sig.items():
+        for sig, siblings in _sibling_groups(children).items():
             if len(siblings) >= 2:
                 groups[(_signature(parent), sig)].extend(siblings)
 
@@ -260,10 +318,17 @@ def extract_companies(html: str, base_url: str) -> list[StartupInfo]:
             website = _card_website(card, base_url)
             external += website is not None
             logos += card.name == "img" or card.find("img") is not None
+            description = _card_description(card, name)
+            
+            if exit_match := _EXIT_NOTE.match(name):
+                name = exit_match.group(1)
+                note = exit_match.group(2).strip()
+                note = note[0].upper() + note[1:] + "."
+                description = f"{description.rstrip(' .')}. {note}" if description else note
             companies.append(StartupInfo(
                 name=name,
                 website=website,
-                description=_card_description(card, name),
+                description=description,
                 source_url=base_url,
             ))
 

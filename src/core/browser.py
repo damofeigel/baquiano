@@ -22,6 +22,7 @@ class PageContent:
     plain_text: str              # page in document order (one part of it), capped to max_text_chars
     part: int = 1                # which part of a long page plain_text holds
     total_parts: int = 1
+    site_name: str = ""          # og:site_name, often the organisation's name
 
     def __str__(self) -> str:
         return self.plain_text
@@ -157,6 +158,8 @@ def extract_page_content(
     # 1. Title (extract before decomposing head)
     title_tag = soup.find("title")
     title = title_tag.get_text(strip=True) if title_tag else ""
+    site_meta = soup.find("meta", attrs={"property": "og:site_name"})
+    site_name = str(site_meta.get("content") or "").strip() if site_meta else ""
 
     # 2. Preserve image alt / title attributes before decomposing
     # In VC portfolios, companies are often logo images where alt text is the only company name.
@@ -270,6 +273,7 @@ def extract_page_content(
         plain_text=plain_text,
         part=part,
         total_parts=total,
+        site_name=site_name,
     )
 
 

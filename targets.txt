@@ -3,3 +3,31 @@
 # Examples:
 #   portfolio:https://www.gridexponential.com
 #   portfolio:https://www.example-fund.com/portafolio
+
+portfolio:https://drapercygnus.com	
+portfolio:https://cites-gss.com
+portfolio:https://alayacapital.com	
+portfolio:https://newtopia.vc	
+portfolio:https://argentina.gob.ar/ciencia/agencia	
+portfolio:https://argentina.gob.ar/ciencia/agencia	
+portfolio:https://gridexponential.com	
+portfolio:https://cites-gss.com	
+portfolio:https://drapercygnus.vc	
+portfolio:https://nxtp.vc	
+portfolio:https://globant.com	
+portfolio:https://17sigma.vc	
+portfolio:https://alaya-capital.com	
+portfolio:https://kaszek.com	
+portfolio:https://embarca.tech	
+portfolio:https://glocal.ag	
+portfolio:https://theyieldlab.com	
+portfolio:https://xpandventures.com	
+portfolio:https://argentina.gob.ar/ciencia/agencia	
+portfolio:https://bidlab.org	
+portfolio:https://innovaryemprendercba.com.ar	
+portfolio:https://corlab.cordoba.gob.ar/	
+portfolio:https://500.co	
+portfolio:https://cites-gss.com	
+portfolio:https://gridx.co	
+portfolio:https://www.ptlc.org.ar	
+portfolio:https://www.santafe.gob.ar	

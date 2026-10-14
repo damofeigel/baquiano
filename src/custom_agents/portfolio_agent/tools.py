@@ -62,6 +62,8 @@ class Evidence:
         self._size = 0
         self._opened: set[str] = set()
         self._attempted: set[str] = set()
+        self.site_name: str | None = None   # first og:site_name seen (fund-name fallback)
+        self.page_title: str | None = None  # first page title seen
 
     def add(self, text: str, is_page: bool, url: str | None = None) -> None:
         if is_page:
@@ -160,6 +162,11 @@ class BrowserTools:
                 else:
                     message = "This page has no readable text. Try search_current_page, scroll_page or get_current_page_html."
                 return json.dumps({"error": message, "operation": method})
+            if method in _PAGE_METHODS:
+                if not self.evidence.site_name and isinstance(getattr(value, "site_name", None), str):
+                    self.evidence.site_name = value.site_name or None
+                if not self.evidence.page_title and isinstance(getattr(value, "title", None), str):
+                    self.evidence.page_title = value.title or None
             if method in _EVIDENCE_METHODS:
                 self.evidence.add(
                     result, is_page=method in _PAGE_METHODS,

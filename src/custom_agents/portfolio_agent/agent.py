@@ -25,6 +25,7 @@ from .context import worker_run_config
 from .instructions import FINDER_AGENT_INSTRUCTIONS
 from .models import FinderResult
 from .output import write_result
+from .heuristics import fund_name_from_title
 from .prepass import PrepassResult, run_prepass
 from .recorder import PortfolioRecorder, looks_like_broken_tool_call, salvage_companies
 from .tools import BrowserTools
@@ -45,6 +46,12 @@ RECOVERY_NOTE = (
 LENGTH_NOTE = (
     "Your last reply was too long and was cut off before any tool call could "
     "be read. Reply with exactly ONE tool call. {saved_names} Continue from there."
+)
+# Needed for gpt-oss-20b
+TEXT_REPLY_NOTE = (
+    "You replied with text instead of a tool call. Only tool calls are saved. "
+    "{saved_names} Save the portfolio companies you found with record_companies "
+    "(at most 15 per call), then call finish."
 )
 MAX_PROMPT_NAMES_CHARS = 3_000
 
@@ -169,6 +176,11 @@ class PortfolioAgent:
         else:
             await self._run_worker(build_worker_prompt(url, prepass), max_turns)
 
+        if not self.recorder.fund_name and not self.recorder.fund_name_hint:
+            # The agent never called record_fund: name the fund from the first
+            # page it read (og:site_name, else the title) rather than "Unknown"
+            evidence = self.browser_tools.evidence
+            self.recorder.fund_name_hint = evidence.site_name or fund_name_from_title(evidence.page_title or "")
         return self._finish(url)
 
     async def _run_worker(self, prompt: str, max_turns: int) -> None:
@@ -225,8 +237,20 @@ class PortfolioAgent:
 
             text = str(result.final_output or "")
             logger.debug("Worker final message:\n%s", text)
-            if self.recorder.finished or not looks_like_broken_tool_call(text):
+            if self.recorder.finished:
                 return
+            if not looks_like_broken_tool_call(text):
+                # A plain-text reply ends an SDK run, but nothing says the work
+                # is done: models with a separate "final answer" channel
+                # (gpt-oss) often answer in prose instead of calling a tool.
+                # Keep the reply (it may list companies) and ask for tool calls.
+                turns_left -= len(result.raw_responses)
+                logger.warning("Worker replied with text instead of a tool call; %d turns left", turns_left)
+                if turns_left <= 0:
+                    break
+                note = TEXT_REPLY_NOTE.format(saved_names=self.recorder.saved_names_note())
+                run_input = result.to_input_list() + [{"role": "user", "content": note}]
+                continue
             # Check evidence
             salvaged, _ = self.recorder.check_evidence(salvage_companies(text))
             saved, _ = self.recorder.add_companies(salvaged)
@@ -244,8 +268,8 @@ class PortfolioAgent:
             run_input = history + [{"role": "user", "content": note}]
 
         self.recorder.add_error(
-            "The model's tool calls were repeatedly cut off or unreadable; "
-            "the portfolio may be incomplete."
+            "The model repeatedly replied without a usable tool call (cut off, "
+            "unreadable or plain text); the portfolio may be incomplete."
         )
 
     def _finish(self, url: str) -> FinderResult:
