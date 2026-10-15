@@ -249,3 +249,54 @@ def test_site_name_is_read_from_the_page():
     page = extract_page_content(html)
     assert page.site_name == "Newtopia VC"
     assert page.title == "Newtopia Portfolio | 90 Latin American Startups"
+
+
+# --- Several targets in one process ----------------------------------------------
+
+@pytest.fixture
+def fake_vllm():
+    """Local OpenAI-compatible server with keep-alive connections, like vLLM.
+    Every reply is plain text, so runs end quickly without opening a browser."""
+    import json as _json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = _json.dumps({
+                "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant", "content": "No companies found."}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}/v1"
+    server.shutdown()
+
+
+def test_consecutive_targets_do_not_share_a_closed_event_loop(monkeypatch, tmp_path, fake_vllm):
+    """Replays the batch failure: 13 of 27 targets hit "RuntimeError: Event loop is closed"
+    because one cached OpenAI client was reused across asyncio.run() calls."""
+    from pipeline import parse_target, run_target
+
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr("src.core.config.VLLM_BASE_URL", fake_vllm)
+    reports = [
+        run_target(parse_target(f"portfolio:https://fund{i}.example"), max_turns=5, mode="agent")
+        for i in range(3)
+    ]
+    assert len(reports) == 3   # before the fix, the second target raised RuntimeError
+    assert all(r.items == 0 for r in reports)

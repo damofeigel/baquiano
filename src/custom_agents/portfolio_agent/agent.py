@@ -19,7 +19,7 @@ from agents import (
 
 from src.core import config
 from src.custom_agents.base import RunReport
-from src.core.llm import OneToolCallPerTurn, get_client, get_model
+from src.core.llm import OneToolCallPerTurn, create_client, create_model
 
 from .context import worker_run_config
 from .instructions import FINDER_AGENT_INSTRUCTIONS
@@ -99,8 +99,8 @@ class PortfolioAgent:
     def __init__(self) -> None:
         self.browser_tools = BrowserTools()
         self.recorder = PortfolioRecorder(evidence=self.browser_tools.evidence)
-        self.client = get_client()
-        self.model = OneToolCallPerTurn(get_model())
+        self.client = create_client()
+        self.model = OneToolCallPerTurn(create_model(self.client))
 
         self._worker = Agent(
             name="PortfolioFinderWorker",
@@ -298,7 +298,10 @@ async def run_portfolio(
 ) -> RunReport:
     """Pipeline entry point: extract one fund's portfolio (see AgentSpec)."""
     with PortfolioAgent() as agent:
-        result = await agent.run(url, max_turns=max_turns, mode=mode)
+        try:
+            result = await agent.run(url, max_turns=max_turns, mode=mode)
+        finally:
+            await agent.client.close()  # inside this run's event loop
     return RunReport(
         summary=f"Fund '{result.fund_name}', {len(result.startups)} startup(s)",
         items=len(result.startups),

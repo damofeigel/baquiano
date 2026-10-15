@@ -83,6 +83,17 @@ def load_targets(cli_specs: list[str], file: Path = TARGETS_FILE) -> list[Target
     return targets
 
 
+def dedupe_targets(targets: list[Target]) -> tuple[list[Target], list[Target]]:
+    """(unique targets in order, duplicates). URLs compare without case or trailing slash."""
+    seen: set[tuple[str, str]] = set()
+    unique, duplicates = [], []
+    for target in targets:
+        key = (target.agent, target.url.rstrip("/").lower())
+        (duplicates if key in seen else unique).append(target)
+        seen.add(key)
+    return unique, duplicates
+
+
 def run_target(target: Target, **options) -> RunReport:
     """Run the target's agent synchronously. Agents ignore options they don't use."""
     return asyncio.run(AGENTS[target.agent].run(target.url, **options))
@@ -126,6 +137,9 @@ if __name__ == "__main__":
         parser.error(str(exc))
     if not targets:
         parser.error("no URLs given and targets.txt is empty or missing")
+    targets, duplicates = dedupe_targets(targets)
+    for dup in duplicates:
+        print(f"Skipping duplicate target: {dup.agent}:{dup.url}")
 
     failed: list[str] = []
     empty: list[str] = []

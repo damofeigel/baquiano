@@ -20,7 +20,7 @@ portfolio:https://alaya-capital.com
 portfolio:https://kaszek.com	
 portfolio:https://embarca.tech	
 portfolio:https://glocal.ag	
-portfolio:https://theyieldlab.com	
+portfolio:https://theyieldlablatam.com/	
 portfolio:https://xpandventures.com	
 portfolio:https://argentina.gob.ar/ciencia/agencia	
 portfolio:https://bidlab.org	

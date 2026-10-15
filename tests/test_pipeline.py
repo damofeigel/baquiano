@@ -7,7 +7,7 @@ import inspect
 import pytest
 
 import pipeline
-from pipeline import Target, load_targets, parse_target, run_target
+from pipeline import Target, dedupe_targets, load_targets, parse_target, run_target
 from src.custom_agents.base import AgentSpec, RunReport
 from src.custom_agents.registry import AGENTS
 
@@ -106,3 +106,13 @@ def test_run_target_dispatches_to_the_named_agent_with_options(monkeypatch):
     assert report.items == 2
     assert calls == [("https://press.example", {"max_turns": 5, "mode": None})]
     assert pipeline.AGENTS["news"].name == "news"  # pipeline reads the same registry
+
+
+def test_duplicate_targets_are_skipped():
+    targets = load_targets([
+        "portfolio:https://cites-gss.com", "portfolio:https://newtopia.vc",
+        "portfolio:https://cites-gss.com/", "portfolio:https://CITES-GSS.com",
+    ])
+    unique, duplicates = dedupe_targets(targets)
+    assert [t.url for t in unique] == ["https://cites-gss.com", "https://newtopia.vc"]
+    assert len(duplicates) == 2

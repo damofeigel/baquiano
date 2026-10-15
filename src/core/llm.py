@@ -19,32 +19,19 @@ from src.core import config
 logger = getLogger(__name__)
 logger.setLevel(config.LOG_LEVEL)
 
-_client: AsyncOpenAI | None = None
-_model: OpenAIChatCompletionsModel | None = None
+def create_client() -> AsyncOpenAI:
+    """A new client for one run.
+
+    Not cached: an AsyncOpenAI client's connections belong to the event loop
+    that opened them, and the pipeline runs each target in a new loop. Sharing
+    one client across runs failed with "RuntimeError: Event loop is closed".
+    Close it when the run ends (await client.close()).
+    """
+    return AsyncOpenAI(base_url=config.VLLM_BASE_URL, api_key=config.API_KEY)
 
 
-def get_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        try:
-            _client = AsyncOpenAI(
-                base_url=config.VLLM_BASE_URL,
-                api_key=config.API_KEY,
-            )
-        except Exception as exc:
-            logger.error(f"Failed to initialize LLM client: {exc}")
-            raise
-    return _client
-
-
-def get_model() -> OpenAIChatCompletionsModel:
-    global _model
-    if _model is None:
-        _model = OpenAIChatCompletionsModel(
-            model=config.VLLM_MODEL,
-            openai_client=get_client(),
-        )
-    return _model
+def create_model(client: AsyncOpenAI) -> OpenAIChatCompletionsModel:
+    return OpenAIChatCompletionsModel(model=config.VLLM_MODEL, openai_client=client)
 
 
 def clean_tool_name(name: str) -> str:
