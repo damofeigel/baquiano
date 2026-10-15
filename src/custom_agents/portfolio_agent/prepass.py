@@ -9,6 +9,7 @@ from src.core.browser import BrowserManager
 
 from .heuristics import (
     extract_companies,
+    find_sister_sites,
     find_next_page_link,
     find_portfolio_links,
     guess_fund_name,
@@ -26,9 +27,44 @@ MAX_LISTING_PAGES = 5
 @dataclass
 class PrepassResult:
     fund_name_hint: str | None = None
-    portfolio_url: str | None = None
+    portfolio_url: str | None = None            # the first portfolio page found
+    portfolio_urls: list[str] = field(default_factory=list)  # all of them (e.g. one per regional site)
     companies: list[StartupInfo] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+
+def _locate_portfolio(browser: BrowserManager, html: str, page_url: str) -> str | None:
+    """Portfolio page URL for the site that's open (navigating to it), or None."""
+    if looks_like_portfolio_url(page_url):
+        return page_url
+    # Prefer a dedicated portfolio page over a "featured companies" homepage section
+    links = find_portfolio_links(html, page_url)
+    if links:
+        browser.go_to(links[0])
+        return browser.page.url
+    return page_url if has_portfolio_heading(html) else None
+
+
+def _read_listing(browser: BrowserManager, page_url: str, read_html) -> list[StartupInfo]:
+    """Companies on the open portfolio page, expanding it and following pagination."""
+    companies: list[StartupInfo] = []
+    visited = {page_url}
+    for _ in range(MAX_LISTING_PAGES):
+        expanded = browser.expand_listing()
+        html = read_html()
+        found = extract_companies(html, page_url)
+        logger.info(
+            "Pre-pass: %d companies on %s (scrolls=%d, clicks=%d)",
+            len(found), page_url, expanded["scrolls"], expanded["clicks"],
+        )
+        companies.extend(found)
+        next_url = find_next_page_link(html, page_url, visited)
+        if not next_url:
+            break
+        browser.go_to(next_url)
+        page_url = browser.page.url
+        visited.add(page_url)
+    return companies
 
 
 def _prepass_sync(
@@ -47,36 +83,32 @@ def _prepass_sync(
     html = read_html()
     result.fund_name_hint = guess_fund_name(html)
 
-    # Prefer a dedicated portfolio page over a "featured companies" homepage section
-    if not looks_like_portfolio_url(page_url):
-        links = find_portfolio_links(html, page_url)
-        if links:
-            browser.go_to(links[0])
-            page_url = browser.page.url
-        elif not has_portfolio_heading(html):
+    portfolio = _locate_portfolio(browser, html, page_url)
+    if portfolio:
+        result.portfolio_urls.append(portfolio)
+        result.companies.extend(_read_listing(browser, portfolio, read_html))
+    else:
+        # No portfolio here: the fund may keep it on regional sites with their
+        # own domains
+        sisters = find_sister_sites(html, page_url)
+        if sisters:
+            logger.info("Pre-pass: no portfolio on %s; trying sister sites %s", page_url, sisters)
+        for site in sisters:
+            try:
+                browser.go_to(site)
+                site_portfolio = _locate_portfolio(browser, read_html(), browser.page.url)
+                if site_portfolio:
+                    result.portfolio_urls.append(site_portfolio)
+                    result.companies.extend(_read_listing(browser, site_portfolio, read_html))
+            except Exception as exc:
+                result.notes.append(f"Sister site {site} failed: {type(exc).__name__}: {exc}")
+        if not result.portfolio_urls:
             result.notes.append("No portfolio page or portfolio section found.")
             return result
-    result.portfolio_url = page_url
 
-    visited = {page_url}
-    for _ in range(MAX_LISTING_PAGES):
-        expanded = browser.expand_listing()
-        html = read_html()
-        found = extract_companies(html, page_url)
-        logger.info(
-            "Pre-pass: %d companies on %s (scrolls=%d, clicks=%d)",
-            len(found), page_url, expanded["scrolls"], expanded["clicks"],
-        )
-        result.companies.extend(found)
-        next_url = find_next_page_link(html, page_url, visited)
-        if not next_url:
-            break
-        browser.go_to(next_url)
-        page_url = browser.page.url
-        visited.add(page_url)
-
+    result.portfolio_url = result.portfolio_urls[0]
     if not result.companies:
-        result.notes.append(f"Could not parse a company grid on {result.portfolio_url}.")
+        result.notes.append(f"Could not parse a company grid on {', '.join(result.portfolio_urls)}.")
     return result
 
 

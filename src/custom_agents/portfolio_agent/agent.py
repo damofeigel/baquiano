@@ -64,9 +64,10 @@ def build_worker_prompt(url: str, prepass: PrepassResult | None) -> str:
     )
     if prepass is None or not prepass.portfolio_url:
         return task
+    where = ", ".join(prepass.portfolio_urls or [prepass.portfolio_url])
     if not prepass.companies:
         return (
-            f"{task}\n\nThe portfolio is probably at {prepass.portfolio_url}, but "
+            f"{task}\n\nThe portfolio is probably at {where}, but "
             f"an automatic parser could not read its companies. Start there."
         )
 
@@ -75,7 +76,7 @@ def build_worker_prompt(url: str, prepass: PrepassResult | None) -> str:
         names = names[:MAX_PROMPT_NAMES_CHARS].rsplit(", ", 1)[0] + ", ..."
     return f"""{task}
 
-        An automatic parser already found the portfolio at {prepass.portfolio_url}
+        An automatic parser already found the portfolio at {where}
         and recorded {len(prepass.companies)} companies: {names}
 
         Your job:

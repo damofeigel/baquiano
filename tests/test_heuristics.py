@@ -9,6 +9,8 @@ import pytest
 from src.custom_agents.portfolio_agent import agent as agent_module
 from src.custom_agents.portfolio_agent.agent import build_worker_prompt
 from src.custom_agents.portfolio_agent.heuristics import (
+    find_sister_sites,
+    split_country,
     fund_name_from_title,
     extract_companies,
     find_next_page_link,
@@ -214,3 +216,102 @@ def test_descriptions_from_logo_alt_text_and_exit_notes():
 ])
 def test_fund_name_from_title(title, name):
     assert fund_name_from_title(title) == name
+
+
+# --- Regional sister sites (theyieldlab.com -> theyieldlablatam.com, .eu, .asia) ----
+
+# No portfolio link of its own (unlike _page(), which adds one in the nav)
+MAIN_SITE = (
+    "<html><head><title>The Yield Lab</title></head><body>"
+    "<h2>The Yield Lab's Regional Sites</h2>"
+    '<a href="https://theyieldlablatam.com/">LATAM</a>'
+    '<a href="https://theyieldlab.eu/">Europe</a>'
+    '<a href="https://www.linkedin.com/company/theyieldlab">LinkedIn</a>'
+    '<a href="https://partner-fund.example/">Our partner</a>'
+    "</body></html>"
+)
+
+
+def test_find_sister_sites():
+    assert find_sister_sites(MAIN_SITE, "https://theyieldlab.com/") == [
+        "https://theyieldlablatam.com/", "https://theyieldlab.eu/",
+    ]
+    # Short brands would match unrelated domains, so none are looked for
+    assert find_sister_sites('<a href="https://abcxyz.com/">x</a>', "https://abc.com/") == []
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("BemAgro | Brazil", ("BemAgro", "Brazil")),
+    ("Agricapital - Colombia", ("Agricapital", "Colombia")),
+    ("Puna Bio", ("Puna Bio", None)),
+    ("Lara - People", ("Lara - People", None)),     # not a country: left alone
+])
+def test_split_country(name, expected):
+    assert split_country(name) == expected
+
+
+def _regional_card(name, country):
+    return (f'<div class="card"><img alt="{name}"><h3>{name} | {country}</h3>'
+            f'<a href="https://{name.lower()}.example">Website</a></div>')
+
+
+class FakeBrowser:
+    """Serves canned pages by URL, like BrowserManager, without a network."""
+
+    def __init__(self, pages):
+        self.pages, self.page = pages, type("Page", (), {"url": ""})()
+
+    def go_to(self, url):
+        self.page.url = url if url in self.pages else url.rstrip("/") + "/"
+        if self.page.url not in self.pages:
+            raise RuntimeError(f"net::ERR_NAME_NOT_RESOLVED at {url}")
+
+    def get_page_content(self):
+        return self.pages[self.page.url]
+
+    def expand_listing(self):
+        return {"scrolls": 0, "clicks": 0}
+
+
+def test_prepass_collects_portfolios_from_sister_sites():
+    from src.custom_agents.portfolio_agent.prepass import _prepass_sync
+
+    latam = _page('<a href="/portfolio/">Portfolio</a>', title="The Yield Lab Latam")
+    latam_portfolio = _page('<div class="grid">' + "".join(
+        _regional_card(n, c) for n, c in
+        [("Auravant", "Argentina"), ("Kilimo", "Argentina"), ("BemAgro", "Brazil"), ("Verqor", "Mexico")]
+    ) + "</div>")
+    eu = "<html><body><h2>Events and news</h2></body></html>"
+    browser = FakeBrowser({
+        "https://theyieldlab.com/": MAIN_SITE,
+        "https://theyieldlablatam.com/": latam,
+        "https://theyieldlablatam.com/portfolio/": latam_portfolio,
+        "https://theyieldlab.eu/": eu,
+    })
+    result = _prepass_sync(browser, "https://theyieldlab.com/")
+
+    assert result.portfolio_urls == ["https://theyieldlablatam.com/portfolio/"]
+    assert {c.name: c.country for c in result.companies} == {
+        "Auravant": "Argentina", "Kilimo": "Argentina", "BemAgro": "Brazil", "Verqor": "Mexico",
+    }
+    assert all(c.source_url == "https://theyieldlablatam.com/portfolio/" for c in result.companies)
+
+
+def test_former_names_and_arrow_links_are_cleaned():
+    cards = "".join([
+        '<div class="c"><img alt="x"><h3>Dexer (formely AgVoice)</h3><p>Voice AI for agronomists in the field</p>'
+        '<a href="https://dexer.example">↗ Visit website</a></div>',
+        '<div class="c"><img alt="x"><h3>Talam Biotech (formerly MicroGen Biotech)</h3><p>Soil remediation with microbes today</p>'
+        '<a href="https://talam.example">↗ Visit website</a></div>',
+        '<div class="c"><img alt="x"><h3>Spotta</h3><p>Smart pest monitoring traps for farms</p>'
+        '<a href="https://spotta.example">↗ Visit website</a></div>',
+        '<div class="c"><img alt="x"><h3>Sundew</h3><p>Sustainable crop protection coatings</p>'
+        '<a href="https://sundew.example">↗ Visit website</a></div>',
+    ])
+    by_name = {c.name: c for c in extract_companies(_page(f'<div class="grid">{cards}</div>'), BASE)}
+    assert set(by_name) == {"Dexer", "Talam Biotech", "Spotta", "Sundew"}
+    for junk in ["Visit website", "Revisit consent button", "Cookie settings"]:
+        assert extract_companies(_page(f'<div class="g">{cards}<div class="c"><h3>{junk}</h3></div></div>'), BASE) \
+            and junk not in {c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)}
+    assert by_name["Dexer"].description.endswith("Formerly AgVoice.")
+    assert by_name["Talam Biotech"].description.endswith("Formerly MicroGen Biotech.")

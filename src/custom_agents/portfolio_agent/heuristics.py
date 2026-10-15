@@ -117,6 +117,58 @@ def find_portfolio_links(html: str, base_url: str) -> list[str]:
     return [h for h, s in sorted(scores.items(), key=lambda kv: -kv[1]) if s > 0]
 
 
+def _brand(url: str) -> str:
+    """Main domain label: 'https://www.theyieldlab.com/x' -> 'theyieldlab'."""
+    labels = _host(url).split(".")
+    while len(labels) > 1 and len(labels[-1]) <= 3:  # drop com, ar, com.ar, co...
+        labels.pop()
+    return re.sub(r"[^a-z0-9]", "", labels[-1] if labels else "")
+
+
+def find_sister_sites(html: str, base_url: str, limit: int = 6) -> list[str]:
+    """Other sites of the same organisation, e.g. regional sites on their own domains.
+
+    theyieldlab.com has no portfolio; it links to theyieldlablatam.com,
+    theyieldlab.eu and theyieldlab.asia, which do. A sister site's domain
+    contains the base site's brand name (at least 5 characters, to avoid
+    matching unrelated sites).
+    """
+    brand = _brand(base_url)
+    if len(brand) < 5:
+        return []
+    soup = BeautifulSoup(html, "html.parser")
+    sites: list[str] = []
+    for a in soup.find_all("a", href=True):
+        href = urljoin(base_url, str(a["href"]))
+        if not href.startswith(("http://", "https://")) or _same_site(href, base_url):
+            continue
+        host = urlparse(href).netloc.lower()
+        root = f"{urlparse(href).scheme}://{host}/"
+        if brand in re.sub(r"[^a-z0-9.]", "", host.removeprefix("www.")) and root not in sites:
+            sites.append(root)
+    return sites[:limit]
+
+
+# Countries a card may show next to the name ("BemAgro | Brazil")
+_COUNTRIES = {
+    "argentina", "brazil", "brasil", "chile", "colombia", "mexico", "méxico", "peru", "perú",
+    "uruguay", "paraguay", "bolivia", "ecuador", "venezuela", "costa rica", "panama", "panamá",
+    "guatemala", "honduras", "el salvador", "nicaragua", "dominican republic", "república dominicana",
+    "puerto rico", "cuba", "usa", "us", "united states", "estados unidos", "canada", "spain", "españa",
+    "portugal", "united kingdom", "uk", "france", "germany", "italy", "netherlands", "israel",
+    "india", "singapore", "australia", "new zealand", "latam", "latin america",
+}
+_NAME_COUNTRY = re.compile(r"^(.+?)\s*[|·–—-]\s*([^|·–—-]+)$")
+
+
+def split_country(name: str) -> tuple[str, str | None]:
+    """'BemAgro | Brazil' -> ('BemAgro', 'Brazil'); other names are left alone."""
+    match = _NAME_COUNTRY.match(name)
+    if match and match.group(2).strip().lower() in _COUNTRIES:
+        return match.group(1).strip(), match.group(2).strip()
+    return name, None
+
+
 def find_next_page_link(html: str, base_url: str, visited: set[str]) -> str | None:
     soup = BeautifulSoup(html, "html.parser")
     candidates = soup.select('a[rel~="next"]') + [
@@ -166,7 +218,10 @@ def _signature(el: Tag) -> tuple[str, str]:
 
 
 _ALT_SEPARATOR = re.compile(r"\s[–—-]\s")
-_EXIT_NOTE = re.compile(r"^(.*?)\s*\(((?:exit|exited|acquired)\b[^)]*)\)\s*$", re.IGNORECASE)
+# "Lara (exit to Visma)", "Dexer (formely AgVoice)": the note moves to the description
+_EXIT_NOTE = re.compile(
+    r"^(.*?)\s*\(((?:exit|exited|acquired|formerly|formely|previously|ex)\b[^)]*)\)\s*$", re.IGNORECASE
+)
 
 
 def _split_alt(alt: str) -> tuple[str, str | None]:
@@ -211,13 +266,20 @@ def _sibling_groups(children: list[Tag]) -> dict[tuple[str, str], list[Tag]]:
     return groups
 
 
+_LINK_LABEL = re.compile(r"^(visit|go to|ir a|visitar|ver sitio|see)\b", re.IGNORECASE)
+_CONSENT = re.compile(r"\b(cookies?|consent|consentimiento)\b", re.IGNORECASE)
+_LEADING_SYMBOLS = "↗↘→←↑↓›»«•·*▶►✓✔ "
+
+
 def _clean_name(text: str) -> str | None:
-    text = " ".join(text.split())
+    text = " ".join(text.split()).strip(_LEADING_SYMBOLS)  # "↗ Visit website"
     if re.search(r"\.(png|jpe?g|svg|webp|gif)$", text, re.I):
         text = re.sub(r"\.(png|jpe?g|svg|webp|gif)$", "", text, flags=re.I).replace("-", " ").replace("_", " ")
     text = _LOGO_WORDS_RE.sub("", text)
     text = re.sub(r"^\s*(de|of)\s+", "", text, flags=re.I).strip(" -–|:·")
     if not text or len(text) > MAX_NAME_CHARS or text.lower() in _GENERIC_NAMES:
+        return None
+    if _LINK_LABEL.match(text) or _CONSENT.search(text):  # "Visit website", cookie banners
         return None
     if text.lower().startswith(("http", "www.")):
         return None
@@ -318,17 +380,19 @@ def extract_companies(html: str, base_url: str) -> list[StartupInfo]:
             website = _card_website(card, base_url)
             external += website is not None
             logos += card.name == "img" or card.find("img") is not None
+            name, country = split_country(name)
             description = _card_description(card, name)
             
             if exit_match := _EXIT_NOTE.match(name):
                 name = exit_match.group(1)
-                note = exit_match.group(2).strip()
+                note = re.sub(r"^formely\b", "formerly", exit_match.group(2).strip(), flags=re.IGNORECASE)
                 note = note[0].upper() + note[1:] + "."
                 description = f"{description.rstrip(' .')}. {note}" if description else note
             companies.append(StartupInfo(
                 name=name,
                 website=website,
                 description=description,
+                country=country,
                 source_url=base_url,
             ))
 
