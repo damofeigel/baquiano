@@ -80,7 +80,10 @@ def remove_consent_dialogs(soup: BeautifulSoup) -> None:
     for el in soup.find_all(True):
         if el.decomposed:  # inside one already removed
             continue
-        marker = " ".join(el.get("class", [])) + " " + str(el.get("id") or "")
+        classes = el.get("class") or []
+        if isinstance(classes, str):
+            classes = [classes]
+        marker = " ".join(str(c) for c in classes) + " " + str(el.get("id") or "")
         if _CONSENT_MARKER.search(marker):
             el.decompose()
 
@@ -306,13 +309,29 @@ class BrowserManager:
         try:
             self.browser: Browser = self.playwright.chromium.launch(headless=self.config.headless)
             self.context: BrowserContext = self.browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                user_agent=self._matching_user_agent(),
                 viewport={"width": 1280, "height": 800},
             )
         except Exception:
             self.playwright.stop()
             raise
         self._active_page: Page | None = None
+
+    def _matching_user_agent(self) -> str:
+        """The browser's own user agent with "HeadlessChrome" replaced by "Chrome".
+
+        Bot filters compare the user agent with what the browser reveals
+        (version in client hints, network fingerprint). A fixed "Chrome 124 on
+        Windows" string on a much newer Linux Chromium was refused by some sites
+        (cites-gss.com: ERR_HTTP2_PROTOCOL_ERROR; innovaryemprendercba.com.ar),
+        and the default "HeadlessChrome" is blocked by others.
+        """
+        context = self.browser.new_context()
+        try:
+            agent = context.new_page().evaluate("navigator.userAgent")
+        finally:
+            context.close()
+        return agent.replace("HeadlessChrome", "Chrome")
 
     def __enter__(self) -> BrowserManager:
         return self

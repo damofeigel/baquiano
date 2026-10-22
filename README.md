@@ -14,6 +14,7 @@ Each URL you give it names the agent that should handle it. Today there is one a
 - [Usage](#usage)
 - [The portfolio agent](#the-portfolio-agent)
 - [Output](#output)
+- [Merging and enriching startups](#merging-and-enriching-startups)
 - [Configuration](#configuration)
 - [Adding a new agent](#adding-a-new-agent)
 - [Project structure](#project-structure)
@@ -265,6 +266,44 @@ Portfolio agent format:
 
 ---
 
+## Merging and enriching startups
+
+Two scripts turn the per-fund outputs into one startup list for the ecosystem map.
+
+### 1. Merge the funds: `scripts/merge_portfolios.py`
+
+```bash
+python scripts/merge_portfolios.py            # latest output of each fund in output/
+python scripts/merge_portfolios.py --all      # every portfolio file, not only the latest
+python scripts/merge_portfolios.py output/a.json output/b.json
+```
+
+- **The same startup in several funds becomes one entry.** It's matched by website domain, then by name (case, accents and punctuation ignored, plus variants like "Heartbest" / "Heartbest Foods"). Beeflow, in both GRIDX and The Yield Lab, becomes one startup with `funds: ["GRIDX", "The Yield Lab"]`.
+- **Every description is kept** in `descriptions`, one per fund, and the longest becomes `description`.
+- **Fields that disagree between funds aren't overwritten.** They're listed under `conflicts`.
+- **Output:** `output/startups_merged_<time>.json` with a `summary` (startups, in several funds, Argentine, country unknown, with conflicts), plus a `.csv` to open in a spreadsheet.
+
+### 2. Enrich and classify: `scripts/enrich_startups.py`
+
+```bash
+python scripts/enrich_startups.py                         # latest merged file; Argentine or unknown country
+python scripts/enrich_startups.py --limit 20              # in batches; a rerun continues where it stopped
+python scripts/enrich_startups.py --names "Puna Bio" Beeflow
+python scripts/enrich_startups.py --all                   # also startups known to be outside Argentina
+```
+
+For each startup it:
+1. reads the startup's homepage and one about/contact page;
+2. looks for Argentina signals: a `.ar` domain, a `+54` phone number, Argentine cities. These are only hints: a partner's logo or "Gobierno de Mendoza" also match;
+3. makes **one structured LLM call** (JSON schema mode) for `country`, `year_founded`, `summary`, `deep_tech` with a `deep_tech_reason`, `tech_area` and `confidence`;
+4. **checks the answer against the pages.** The model must quote the text behind `country` and `year_founded`; if the quote isn't on the pages, the field is set to null and the reason recorded in `checks`. It also flags a `deep_tech` answer that contradicts the chosen area.
+
+Notes:
+- **The categories are in `scripts/taxonomy.json`:** the deep-tech definition given to the model, and each area with whether it counts as deep tech. Edit it to change the classification; `tech_area` can only be one of its keys.
+- **Startups with no website** are classified from the funds' descriptions alone, which usually means `confidence: low`.
+- **Output:** `output/startups_enriched_<time>.json`, named after the merged file, with each startup's `enrichment` and a `summary` (Argentine, Argentine deep tech, by area).
+- **Progress is saved after every startup,** and a rerun skips the ones already done, because with gpt-oss a full run takes hours.
+
 ## Configuration
 
 All settings are read from `.env` (see `.env.example`).
@@ -353,6 +392,11 @@ src/custom_agents/
     context.py                  Trims old page outputs from the model's context
     models.py                   StartupInfo / FinderResult (Pydantic)
     output.py                   Per-run output files
+
+scripts/
+  merge_portfolios.py           Merge per-fund outputs into one startup list
+  enrich_startups.py            Visit startup websites, classify with the LLM (country, deep tech, area)
+  taxonomy.json                 Deep-tech definition and technology areas used by enrich_startups.py
 
 src/scrappy_project/            Scrapy skeleton (not used yet)
 tests/                          Unit, agent-loop and browser tests (fixtures/ has a local test site)

@@ -496,3 +496,10 @@ class PortfolioRecorder:
             return "finished"
 
         return [record_fund, record_companies, remove_companies, report_error, finish]
+
+
+# Public matching helpers, shared with scripts/merge_portfolios.py so that
+# merging across funds follows the same rules as merging within a run
+same_company_name = _same_company_name
+dedupe_key = _dedupe_key
+website_domain = _domain
