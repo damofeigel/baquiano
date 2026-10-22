@@ -30,11 +30,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.custom_agents.portfolio_agent.recorder import (  # noqa: E402
-    dedupe_key,
-    same_company_name,
-    website_domain,
-)
+from src.core.matching import dedupe_key, same_company_name, website_domain  # noqa: E402
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
 STAMP = re.compile(r"_(\d{8}-\d{6})(?:-\d+)?\.json$")
@@ -49,15 +45,35 @@ def is_portfolio(data: object) -> bool:
     )
 
 
+def fund_site(path: Path) -> tuple[str, str]:
+    """(fund site, timestamp) from the <site>_<YYYYmmdd-HHMMSS>.json naming."""
+    match = STAMP.search(path.name)
+    return (path.name[: match.start()], match.group(1)) if match else (path.stem, "")
+
+
 def latest_per_fund(files: list[Path]) -> list[Path]:
-    """The newest file per fund, by the <fund>_<YYYYmmdd-HHMMSS>.json naming."""
+    """The newest file per fund site."""
     newest: dict[str, tuple[str, Path]] = {}
     for f in files:
-        match = STAMP.search(f.name)
-        fund, stamp = (f.name[: match.start()], match.group(1)) if match else (f.stem, "")
-        if fund not in newest or stamp > newest[fund][0]:
-            newest[fund] = (stamp, f)
+        site, stamp = fund_site(f)
+        if site not in newest or stamp > newest[site][0]:
+            newest[site] = (stamp, f)
     return sorted(path for _, path in newest.values())
+
+
+def fund_names(inputs: list[Path]) -> dict[Path, str]:
+    """One display name per fund site, from its newest file.
+
+    Runs of the same fund can name it differently ("Grid Exponential" from the
+    agent, "GRIDX" from the pre-pass); without this, --all lists it twice.
+    """
+    newest: dict[str, tuple[str, str]] = {}
+    for path in inputs:
+        site, stamp = fund_site(path)
+        name = json.loads(path.read_text(encoding="utf-8")).get("fund_name") or "Unknown"
+        if name != "Unknown" and (site not in newest or stamp > newest[site][0]):
+            newest[site] = (stamp, name)
+    return {path: newest.get(fund_site(path)[0], ("", "Unknown"))[1] for path in inputs}
 
 
 def find_inputs(paths: list[Path], include_all: bool) -> list[Path]:
@@ -90,9 +106,10 @@ def find_match(merged: list[dict], startup: dict) -> dict | None:
 
 def merge(inputs: list[Path]) -> list[dict]:
     merged: list[dict] = []
+    names = fund_names(inputs)
     for path in inputs:
         data = json.loads(path.read_text(encoding="utf-8"))
-        fund = data.get("fund_name") or "Unknown"
+        fund = names[path]
         for startup in data["startups"]:
             if not startup.get("name"):
                 continue

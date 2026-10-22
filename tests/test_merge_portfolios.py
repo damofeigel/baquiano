@@ -68,3 +68,15 @@ def test_latest_file_per_fund_and_non_portfolios_skipped(tmp_path, monkeypatch):
 
     assert mp.find_inputs([], include_all=False) == sorted([newest, other])
     assert len(mp.find_inputs([], include_all=True)) == 3
+
+
+def test_same_fund_named_differently_across_runs_is_one_fund(tmp_path):
+    """--all over GridX runs listed startups as in "Grid Exponential, GRIDX"."""
+    old = _fund(tmp_path / "gridexponential.com_20261010-174313.json", "Grid Exponential",
+                [{"name": "Beeflow", "website": "https://beeflow.com"}])
+    new = _fund(tmp_path / "gridexponential.com_20261013-154957.json", "GRIDX",
+                [{"name": "Beeflow", "website": "https://beeflow.com"}])
+    unnamed = _fund(tmp_path / "newtopia.vc_20261014-183757.json", "Unknown", [{"name": "Aviva"}])
+    merged = {s["name"]: s for s in mp.merge([old, new, unnamed])}
+    assert merged["Beeflow"]["funds"] == ["GRIDX"]          # newest run's name
+    assert merged["Aviva"]["funds"] == ["Unknown"]

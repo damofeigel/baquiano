@@ -17,6 +17,10 @@ from urllib.parse import urlparse
 from agents import FunctionTool, function_tool
 from pydantic import ValidationError
 
+from src.core.matching import dedupe_key as _dedupe_key
+from src.core.matching import same_company_name as _same_company_name
+from src.core.matching import website_domain as _domain
+
 from .heuristics import is_social_url
 from .models import FinderResult, StartupInfo
 
@@ -129,42 +133,6 @@ def salvage_companies(text: str) -> list[StartupInfo]:
                 pass
         i = text.find("{", end)
     return found
-
-
-def _same_company_name(a: str, b: str) -> bool:
-    """Name variants of one company, e.g. from a fund's regional sites:
-    "Heartbest" / "Heartbest Foods", "Botanical Solution" / "Botanical Solutions".
-
-    The longer name must be the shorter plus whole extra words (no digits, so
-    "Startup 1" / "Startup 10" and "Glaia" / "Glaia 2" stay apart), and the
-    shorter needs 6+ characters so short names ("Agree" / "Agreena") stay apart.
-    """
-    (short_key, short), (long_key, long) = sorted(
-        ((_dedupe_key(a), a), (_dedupe_key(b), b)), key=lambda pair: len(pair[0])
-    )
-    if not short_key:
-        return False
-    if short_key.rstrip("s") == long_key.rstrip("s") and short_key[-1:].isalpha():
-        return True
-    short_words, long_words = short.lower().split(), long.lower().split()
-    extra = long_words[len(short_words):]
-    return (
-        len(short_key) >= 6
-        and long_words[:len(short_words)] == short_words
-        and bool(extra)
-        and all(word.isalpha() for word in extra)
-    )
-
-
-def _dedupe_key(name: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", name.lower())
-
-
-def _domain(url: str | None) -> str | None:
-    if not url:
-        return None
-    host = urlparse(url if "://" in url else f"https://{url}").netloc.lower()
-    return host.removeprefix("www.") or None
 
 
 def _same_site(a: str | None, b: str | None) -> bool:
@@ -496,10 +464,3 @@ class PortfolioRecorder:
             return "finished"
 
         return [record_fund, record_companies, remove_companies, report_error, finish]
-
-
-# Public matching helpers, shared with scripts/merge_portfolios.py so that
-# merging across funds follows the same rules as merging within a run
-same_company_name = _same_company_name
-dedupe_key = _dedupe_key
-website_domain = _domain
