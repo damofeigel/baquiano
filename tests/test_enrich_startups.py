@@ -128,3 +128,27 @@ def test_default_selection_is_argentina_or_unknown():
 
 def test_parse_json_tolerates_text_around_it():
     assert es.parse_json('Here you go:\n```json\n{"country": null}\n```') == {"country": None}
+
+
+# --- Checking the LLM server before starting -----------------------------------------
+
+class FakeModels:
+    def __init__(self, ids=None, error=None):
+        self.ids, self.error = ids or [], error
+
+    def list(self):
+        if self.error:
+            raise self.error
+        return [SimpleNamespace(id=i) for i in self.ids]
+
+
+def test_check_llm_reports_an_unreachable_server():
+    client = SimpleNamespace(models=FakeModels(error=ConnectionError("Connection refused")))
+    problem = es.check_llm(client, "openai/gpt-oss-20b")
+    assert "Can't reach the LLM server" in problem and "Is vLLM running?" in problem
+
+
+def test_check_llm_reports_a_model_the_server_does_not_serve():
+    client = SimpleNamespace(models=FakeModels(ids=["openai/gpt-oss-20b"]))
+    assert "It serves: openai/gpt-oss-20b" in es.check_llm(client, "meta-llama/Llama-3.1-8B-Instruct")
+    assert es.check_llm(client, "openai/gpt-oss-20b") is None

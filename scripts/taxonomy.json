@@ -1,22 +1,115 @@
 {
+  "ontology": "deeptech_ar",
+  "ontology_version": "0.1.0",
+  "taxonomy": "technological_areas",
   "deep_tech_definition": "A deep tech company's product rests on substantial scientific or engineering R&D (new biology, chemistry, materials, physics, hardware or core AI research), usually with lab work, long development cycles or protectable IP. Applying existing software to a business process is not deep tech, even when it uses AI.",
+  "groups": {
+    "Biotechnology": {"deep_tech": true, "parent": null},
+    "Advanced Materials and Nanotechnology": {"deep_tech": true, "parent": null},
+    "Digital Technologies": {"deep_tech": false, "parent": null}
+  },
   "areas": {
-    "biotech_health": {"deep_tech": true, "label": "Biotech & life sciences for human health (therapeutics, diagnostics, genomics)"},
-    "biotech_agri_food": {"deep_tech": true, "label": "Agri & food biotech (biologicals, crop genetics, alternative proteins, animal health)"},
-    "biotech_industrial": {"deep_tech": true, "label": "Industrial & environmental biotech (enzymes, biomaterials, fermentation, bioremediation)"},
-    "advanced_materials": {"deep_tech": true, "label": "Advanced materials & chemistry"},
-    "nanotech": {"deep_tech": true, "label": "Nanotechnology"},
-    "medical_devices": {"deep_tech": true, "label": "Medical devices & medtech hardware"},
-    "ai_core": {"deep_tech": true, "label": "AI as the core technology (new models, computer vision, ML research)"},
-    "robotics_hardware": {"deep_tech": true, "label": "Robotics, drones, sensors, IoT & electronics hardware"},
-    "photonics_semiconductors": {"deep_tech": true, "label": "Photonics, semiconductors & quantum"},
-    "space_aerospace": {"deep_tech": true, "label": "Space & aerospace"},
-    "energy_climate": {"deep_tech": true, "label": "Energy & climate tech (batteries, hydrogen, carbon capture, clean energy)"},
-    "agtech_digital": {"deep_tech": false, "label": "Digital agtech (farm software, precision ag analytics, agri marketplaces)"},
-    "software_saas": {"deep_tech": false, "label": "Software & SaaS"},
-    "fintech": {"deep_tech": false, "label": "Fintech & insurtech"},
-    "commerce_marketplaces": {"deep_tech": false, "label": "E-commerce, retail & marketplaces"},
-    "health_services": {"deep_tech": false, "label": "Digital health & health services"},
-    "other": {"deep_tech": false, "label": "Other"}
+    "biotech_health": {
+      "deep_tech": true,
+      "name": "Medical Biotechnology",
+      "parent": "Biotechnology",
+      "label": "Biotech & life sciences for human health (therapeutics, diagnostics, genomics)"
+    },
+    "biotech_agri_food": {
+      "deep_tech": true,
+      "name": "Agricultural Biotechnology",
+      "parent": "Biotechnology",
+      "label": "Agri & food biotech (biologicals, crop genetics, alternative proteins, animal health)"
+    },
+    "biotech_industrial": {
+      "deep_tech": true,
+      "name": "Industrial Biotechnology",
+      "parent": "Biotechnology",
+      "label": "Industrial & environmental biotech (enzymes, biomaterials, fermentation, bioremediation)"
+    },
+    "advanced_materials": {
+      "deep_tech": true,
+      "name": "Advanced Materials",
+      "parent": "Advanced Materials and Nanotechnology",
+      "label": "Advanced materials & chemistry"
+    },
+    "nanotech": {
+      "deep_tech": true,
+      "name": "Nanotechnology",
+      "parent": "Advanced Materials and Nanotechnology",
+      "label": "Nanotechnology"
+    },
+    "medical_devices": {
+      "deep_tech": true,
+      "name": "Medical Devices",
+      "parent": null,
+      "label": "Medical devices & medtech hardware"
+    },
+    "ai_core": {
+      "deep_tech": true,
+      "name": "Artificial Intelligence",
+      "parent": null,
+      "label": "AI as the core technology (new models, computer vision, ML research)"
+    },
+    "robotics_hardware": {
+      "deep_tech": true,
+      "name": "Robotics and Hardware",
+      "parent": null,
+      "label": "Robotics, drones, sensors, IoT & electronics hardware"
+    },
+    "photonics_semiconductors": {
+      "deep_tech": true,
+      "name": "Photonics and Semiconductors",
+      "parent": null,
+      "label": "Photonics, semiconductors & quantum"
+    },
+    "space_aerospace": {
+      "deep_tech": true,
+      "name": "Space and Aerospace",
+      "parent": null,
+      "label": "Space & aerospace"
+    },
+    "energy_climate": {
+      "deep_tech": true,
+      "name": "Energy and Climate",
+      "parent": null,
+      "label": "Energy & climate tech (batteries, hydrogen, carbon capture, clean energy)"
+    },
+    "agtech_digital": {
+      "deep_tech": false,
+      "name": "Digital Agtech",
+      "parent": "Digital Technologies",
+      "label": "Digital agtech (farm software, precision ag analytics, agri marketplaces)"
+    },
+    "software_saas": {
+      "deep_tech": false,
+      "name": "Software and SaaS",
+      "parent": "Digital Technologies",
+      "label": "Software & SaaS"
+    },
+    "fintech": {
+      "deep_tech": false,
+      "name": "Fintech",
+      "parent": "Digital Technologies",
+      "label": "Fintech & insurtech"
+    },
+    "commerce_marketplaces": {
+      "deep_tech": false,
+      "name": "Commerce and Marketplaces",
+      "parent": "Digital Technologies",
+      "label": "E-commerce, retail & marketplaces"
+    },
+    "health_services": {
+      "deep_tech": false,
+      "name": "Health Services",
+      "parent": "Digital Technologies",
+      "label": "Digital health & health services"
+    },
+    "other": {
+      "deep_tech": false,
+      "name": "Other",
+      "parent": null,
+      "label": "Other"
+    }
   }
 }

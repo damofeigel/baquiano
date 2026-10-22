@@ -160,6 +160,18 @@ Its website:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def check_llm(client: Any, model: str) -> str | None:
+    """None if the server answers and serves the model, else a message saying what's wrong."""
+    try:
+        served = [m.id for m in client.models.list()]
+    except Exception as exc:
+        return (f"Can't reach the LLM server at {config.VLLM_BASE_URL} ({type(exc).__name__}: {exc}). "
+                f"Is vLLM running? Check with: curl {config.VLLM_BASE_URL.rstrip('/')}/models")
+    if served and model not in served:
+        return f"The server doesn't serve VLLM_MODEL={model!r}. It serves: {', '.join(served)}"
+    return None
+
+
 def make_llm_classifier(client: Any, model: str) -> Classifier:
     """Structured output via the server's JSON-schema mode, with a plain-JSON fallback."""
     def classify(messages: list[dict[str, str]], schema: dict[str, Any]) -> dict[str, Any]:
@@ -276,10 +288,17 @@ def main() -> None:
         todo = todo[: args.limit]
     print(f"{len(done)} already enriched, {len(todo)} to do -> {out}")
 
-    from openai import OpenAI
+    import openai
     from src.core.browser import BrowserManager
 
-    classify = make_llm_classifier(OpenAI(base_url=config.VLLM_BASE_URL, api_key=config.API_KEY), config.VLLM_MODEL)
+    client = openai.OpenAI(base_url=config.VLLM_BASE_URL, api_key=config.API_KEY, max_retries=1)
+    if problem := check_llm(client, config.VLLM_MODEL):
+        sys.exit(problem)
+    classify = make_llm_classifier(client, config.VLLM_MODEL)
+    # Errors that will fail every startup the same way: stop instead of
+    # visiting every website for nothing (progress is saved; a rerun resumes)
+    fatal = (openai.APIConnectionError, openai.AuthenticationError, openai.PermissionDeniedError,
+             openai.NotFoundError, openai.BadRequestError)
     result = {"enriched_at": None, "source": str(merged_path), "taxonomy": str(args.taxonomy), "startups": []}
 
     def save() -> None:
@@ -294,6 +313,10 @@ def main() -> None:
         for i, startup in enumerate(todo, 1):
             try:
                 enrichment = enrich_one(startup, browser, classify, taxonomy)
+            except fatal as exc:
+                save()
+                sys.exit(f"[{i}/{len(todo)}] {startup['name']}: stopping, the LLM server failed "
+                         f"({type(exc).__name__}: {exc}). Progress saved; rerun to continue.")
             except Exception as exc:
                 print(f"[{i}/{len(todo)}] {startup['name']}: FAILED {type(exc).__name__}: {exc}")
                 continue
