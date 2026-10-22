@@ -50,8 +50,8 @@ LENGTH_NOTE = (
 # Needed for gpt-oss-20b
 TEXT_REPLY_NOTE = (
     "You replied with text instead of a tool call. Only tool calls are saved. "
-    "{saved_names} Save the portfolio companies you found with record_companies "
-    "(at most 15 per call), then call finish."
+    "{saved_names} Save any portfolio companies not in that list with "
+    "record_companies (at most 15 per call). If nothing is missing, call finish."
 )
 MAX_PROMPT_NAMES_CHARS = 3_000
 
@@ -157,11 +157,13 @@ class PortfolioAgent:
             raise ValueError(f"Unknown mode {mode!r}; expected one of {MODES}")
         self.recorder.reset()
         self.recorder.site_url = url
+        self._prepass_found = 0
         self.browser_tools.evidence.reset()
 
         prepass: PrepassResult | None = None
         if mode in ("hybrid", "deterministic"):
             prepass = await run_prepass(self.browser_tools, url)
+            self._prepass_found = len(prepass.companies)
             self.recorder.fund_name_hint = prepass.fund_name_hint
             self.recorder.source_url = prepass.portfolio_url
             self.recorder.add_companies(prepass.companies)
@@ -268,6 +270,12 @@ class PortfolioAgent:
             note = RECOVERY_NOTE.format(saved=saved, saved_names=self.recorder.saved_names_note())
             run_input = history + [{"role": "user", "content": note}]
 
+        if getattr(self, "_prepass_found", 0):
+            # Hybrid: the pre-pass already listed the portfolio and the agent's
+            # review is optional; a model that only answers in text adds nothing
+            # but doesn't make the result incomplete.
+            logger.warning("Agent review ended without a usable tool call; keeping the pre-pass results")
+            return
         self.recorder.add_error(
             "The model repeatedly replied without a usable tool call (cut off, "
             "unreadable or plain text); the portfolio may be incomplete."

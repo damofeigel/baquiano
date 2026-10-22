@@ -67,6 +67,23 @@ LOAD_MORE_RE = re.compile(
 
 # Core extraction helpers
 
+# Cookie/consent dialogs (CookieYes "cky-", Cookiebot, OneTrust, Complianz...):
+# their category lists look like card grids and they open every page
+_CONSENT_MARKER = re.compile(
+    r"(^|[\s_-])(cky|cookies?|cookie-?law|consent|gdpr|cmplz|onetrust|cookiebot|cookieyes|cc-window)([\s_-]|$)",
+    re.IGNORECASE,
+)
+
+
+def remove_consent_dialogs(soup: BeautifulSoup) -> None:
+    """Remove cookie/consent banners and dialogs from the parsed page (in place)."""
+    for el in soup.find_all(True):
+        if el.decomposed:  # inside one already removed
+            continue
+        marker = " ".join(el.get("class", [])) + " " + str(el.get("id") or "")
+        if _CONSENT_MARKER.search(marker):
+            el.decompose()
+
 _BLOCK_TAGS = [
     "p", "div", "li", "ul", "ol", "section", "article", "header", "footer", "nav",
     "main", "aside", "table", "tr", "thead", "tbody", "dl", "dt", "dd", "figure",
@@ -185,6 +202,7 @@ def extract_page_content(
             svg.decompose()
 
     # 4. Remove non-content tags
+    remove_consent_dialogs(soup)
     for tag in soup(["script", "style", "noscript", "iframe", "head", "meta", "link"]):
         tag.decompose()
 

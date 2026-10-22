@@ -672,3 +672,43 @@ def test_fund_named_from_the_page_when_agent_never_records_it(monkeypatch, tmp_p
 
     assert result.fund_name == "Newtopia VC"
     assert "Fund name was not identified." not in result.errors
+
+
+def test_name_variants_from_regional_sites_are_merged():
+    rec = PortfolioRecorder()
+    rec.add_companies([
+        StartupInfo(name="Heartbest Foods", website="https://www.heartbest.com.mx"),
+        StartupInfo(name="Botanical Solutions", website="https://botanical-solution.com"),
+        StartupInfo(name="Agree", website="https://www.agree.ag"),
+    ])
+    rec.add_companies([
+        StartupInfo(name="Heartbest", country="Mexico"),            # LatAm site, no website
+        StartupInfo(name="Botanical Solution", country="Chile"),
+        StartupInfo(name="Agreena"),                                # different company
+    ])
+    by_name = {c.name: c for c in rec.companies}
+    assert set(by_name) == {"Heartbest Foods", "Botanical Solutions", "Agree", "Agreena"}
+    assert by_name["Heartbest Foods"].country == "Mexico"
+
+
+def test_hybrid_text_replies_keep_prepass_results_without_error(monkeypatch, tmp_path):
+    """Replays theyieldlab.com in hybrid mode: gpt-oss only answered in text."""
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
+
+    async def fake_prepass(browser_tools, url):
+        return agent_module.PrepassResult(
+            fund_name_hint="The Yield Lab", portfolio_url=url, portfolio_urls=[url],
+            companies=[StartupInfo(name="Kilimo"), StartupInfo(name="Auravant")],
+        )
+
+    monkeypatch.setattr(agent_module, "run_prepass", fake_prepass)
+    model = ScriptedModel(["The list looks complete."] * (agent_module.MAX_RECOVERIES + 1))
+    portfolio_agent = _agent_with_model(monkeypatch, model, page_text=GRIDX_PAGE)
+    try:
+        result = asyncio.run(portfolio_agent.run("https://theyieldlab.example", mode="hybrid", max_turns=10))
+    finally:
+        portfolio_agent.close()
+
+    assert sorted(s.name for s in result.startups) == ["Auravant", "Kilimo"]
+    assert result.errors == []
+    assert "If nothing is missing, call finish" in json.dumps(model.inputs[1], default=str)

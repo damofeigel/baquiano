@@ -16,6 +16,8 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
+from src.core.browser import remove_consent_dialogs
+
 from .models import StartupInfo
 
 MIN_CARDS = 4
@@ -42,6 +44,8 @@ _GENERIC_NAMES = {
     "learn more", "read more", "see more", "view more", "more", "ver", "ver más",
     "ver mas", "leer más", "más info", "mas info", "más información", "details",
     "detalles", "link", "home", "inicio", "portfolio", "portafolio",
+    # status badges shown on cards instead of the name ("Exited" -> agribodytech.com)
+    "exited", "exit", "acquired", "new", "featured", "active", "realized", "ipo",
 }
 _ROLE_RE = re.compile(
     r"\b(ceo|cto|coo|cfo|founder|co-founder|partner|managing director|associate|"
@@ -157,7 +161,28 @@ _COUNTRIES = {
     "puerto rico", "cuba", "usa", "us", "united states", "estados unidos", "canada", "spain", "españa",
     "portugal", "united kingdom", "uk", "france", "germany", "italy", "netherlands", "israel",
     "india", "singapore", "australia", "new zealand", "latam", "latin america",
+    "ireland", "denmark", "sweden", "norway", "finland", "belgium", "switzerland", "austria",
+    "poland", "indonesia", "malaysia", "myanmar", "thailand", "vietnam", "philippines",
+    "japan", "china", "south korea", "kenya", "nigeria", "south africa", "egypt",
 }
+# Regions/labels that look like countries in tag lists but aren't one
+_NOT_COUNTRIES = {"latam", "latin america"}
+
+
+def country_from_tags(text: str | None) -> str | None:
+    """Country in a tag-list description ("Crop Science Singapore Food Security").
+
+    Only for short texts with no full stop (tags, not prose) naming exactly one country.
+    """
+    if not text or "." in text or len(text.split()) > 8:
+        return None
+    lowered = f" {text.lower()} "
+    found = {c for c in _COUNTRIES - _NOT_COUNTRIES if len(c) > 2 and f" {c} " in lowered}
+    if len(found) != 1:
+        return None
+    country = found.pop()
+    start = lowered.index(f" {country} ") + 1
+    return text[start - 1:start - 1 + len(country)]
 _NAME_COUNTRY = re.compile(r"^(.+?)\s*[|·–—-]\s*([^|·–—-]+)$")
 
 
@@ -227,7 +252,8 @@ _EXIT_NOTE = re.compile(
 def _split_alt(alt: str) -> tuple[str, str | None]:
     """'Aviva – Phygital neobank … | Newtopia VC portfolio' -> ('Aviva', 'Phygital neobank …')."""
     parts = _ALT_SEPARATOR.split(alt, maxsplit=1)
-    if len(parts) == 1:
+    # A name is short; "Kaffe Bueno utilises coffee by-products – such as…" is a sentence
+    if len(parts) == 1 or len(parts[0].split()) > 4:
         return alt, None
     description = parts[1].split(" | ")[0].strip()
     return parts[0].strip(), description or None
@@ -266,7 +292,10 @@ def _sibling_groups(children: list[Tag]) -> dict[tuple[str, str], list[Tag]]:
     return groups
 
 
-_LINK_LABEL = re.compile(r"^(visit|go to|ir a|visitar|ver sitio|see)\b", re.IGNORECASE)
+_LINK_LABEL = re.compile(
+    r"^(visit|go to|ir a|visitar|ver sitio|see|read more|learn more|more about|leer m[aá]s|saber m[aá]s)\b",
+    re.IGNORECASE,
+)
 _CONSENT = re.compile(r"\b(cookies?|consent|consentimiento)\b", re.IGNORECASE)
 _LEADING_SYMBOLS = "↗↘→←↑↓›»«•·*▶►✓✔ "
 
@@ -305,6 +334,37 @@ def _card_name(card: Tag) -> str | None:
     for text in card.stripped_strings:
         if name := _clean_name(text):
             return name
+    return _name_from_slug(card)
+
+
+_SLUG_SKIP = {"portfolio", "portafolio", "companies", "empresas", "startups", "about", "contact", "index"}
+
+
+def _name_from_slug(card: Tag) -> str | None:
+    """Last resort for cards with no name text: the detail link's slug.
+
+    theyieldlab.eu cards are a logo whose alt is a description plus a "Read
+    more about this company" link to /portfolio-items/apisprotect/. If the
+    description starts with words matching the slug, keep that spelling
+    ("ApisProtect"); otherwise title-case the slug ("Pure Ocean Algae").
+    """
+    links = [card] if card.name == "a" else card.find_all("a", href=True)
+    for a in links:
+        segments = [seg for seg in urlparse(str(a.get("href", ""))).path.split("/") if seg]
+        if not segments:
+            continue
+        slug = segments[-1].lower()
+        if slug in _SLUG_SKIP or not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", slug):
+            continue
+        key = slug.replace("-", "")
+        texts = [str(img.get("alt") or "") for img in card.find_all("img")] + list(card.stripped_strings)
+        for text in texts:
+            words = text.split()
+            for n in range(1, min(5, len(words)) + 1):
+                candidate = " ".join(words[:n]).strip(".,:;")
+                if re.sub(r"[^a-z0-9]", "", candidate.lower()) == key:
+                    return candidate
+        return slug.replace("-", " ").title()
     return None
 
 
@@ -323,11 +383,15 @@ def _card_description(card: Tag, name: str) -> str | None:
         if t and t != name and len(t) > len(name) + 20
     ]
     if not texts:
-        # Some grids put the description only in the logo's alt text: "Name – description"
+        # Some grids put the description only in the logo's alt text:
+        # "Name – description", or a whole sentence about the company
         for img in ([card] if card.name == "img" else card.find_all("img")):
-            alt_name, description = _split_alt(str(img.get("alt") or ""))
+            alt = " ".join(str(img.get("alt") or "").split())
+            alt_name, description = _split_alt(alt)
             if description and _clean_name(alt_name) == name:
                 return description[:MAX_DESCRIPTION_CHARS]
+            if len(alt) > len(name) + 30 and not description:
+                return alt[:MAX_DESCRIPTION_CHARS]
         return None
     text = " ".join(min(texts, key=len).split())  # innermost block, not a wrapper
     return text[:MAX_DESCRIPTION_CHARS]
@@ -345,6 +409,7 @@ def _looks_like_team(cards: list[Tag]) -> bool:
 def extract_companies(html: str, base_url: str) -> list[StartupInfo]:
     """Return companies from the most portfolio-like repeated card group, or []."""
     soup = BeautifulSoup(html, "html.parser")
+    remove_consent_dialogs(soup)
     for tag in soup(_NAV_SKIP):
         tag.decompose()
 
@@ -382,6 +447,7 @@ def extract_companies(html: str, base_url: str) -> list[StartupInfo]:
             logos += card.name == "img" or card.find("img") is not None
             name, country = split_country(name)
             description = _card_description(card, name)
+            country = country or country_from_tags(description)
             
             if exit_match := _EXIT_NOTE.match(name):
                 name = exit_match.group(1)

@@ -9,6 +9,7 @@ import pytest
 from src.custom_agents.portfolio_agent import agent as agent_module
 from src.custom_agents.portfolio_agent.agent import build_worker_prompt
 from src.custom_agents.portfolio_agent.heuristics import (
+    country_from_tags,
     find_sister_sites,
     split_country,
     fund_name_from_title,
@@ -315,3 +316,61 @@ def test_former_names_and_arrow_links_are_cleaned():
             and junk not in {c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)}
     assert by_name["Dexer"].description.endswith("Formerly AgVoice.")
     assert by_name["Talam Biotech"].description.endswith("Formerly MicroGen Biotech.")
+
+
+# --- theyieldlab.eu: cookie dialog, cards without name text, status badges ----------
+
+CONSENT_DIALOG = (
+    '<div class="cky-consent-container"><div class="cky-preference-body">'
+    + "".join(
+        f'<div class="cky-accordion"><h3>{c}</h3><p>{c} cookies are used to understand how visitors interact.</p></div>'
+        for c in ["Necessary", "Functional", "Analytics", "Performance", "Advertisement"]
+    )
+    + "</div></div>"
+)
+
+
+def _eu_card(slug, alt):
+    return (f'<li class="post-card"><a aria-label="Read more about this company" '
+            f'href="https://theyieldlab.eu/portfolio-items/{slug}/"></a><img alt="{alt}"></li>')
+
+
+EU_HTML = _page(CONSENT_DIALOG + '<ul class="grid">' + "".join([
+    _eu_card("apisprotect", "ApisProtect uses in-hive sensors to monitor honey bee colonies remotely."),
+    _eu_card("pure-ocean-algae", "A raw material harvested sustainably from Irish seaweed beds and coasts."),
+    _eu_card("kaffe-bueno", "Kaffe Bueno utilises coffee by-products – such as spent coffee grounds – as ingredients."),
+    _eu_card("collie", "Collie develops wearable technologies for livestock to monitor their health."),
+]) + "</ul>")
+
+
+def test_cookie_dialogs_are_not_read_as_companies_or_page_text():
+    from src.core.browser import extract_page_content
+
+    names = {c.name for c in extract_companies(EU_HTML, "https://theyieldlab.eu/company-portfolio/")}
+    assert not names & {"Necessary", "Functional", "Analytics", "Performance", "Advertisement"}
+    assert "cookies" not in extract_page_content(EU_HTML).plain_text.lower()
+
+
+def test_names_from_detail_link_slugs():
+    by_name = {c.name: c for c in extract_companies(EU_HTML, "https://theyieldlab.eu/company-portfolio/")}
+    assert set(by_name) == {"ApisProtect", "Pure Ocean Algae", "Kaffe Bueno", "Collie"}
+    assert by_name["ApisProtect"].description.startswith("ApisProtect uses in-hive sensors")
+
+
+def test_status_badge_is_not_a_name():
+    cards = "".join(
+        f'<div class="c"><span>Exited</span><img alt="{n}"><a href="https://{n.lower()}.example">site</a></div>'
+        for n in ["Agribody", "Holganix", "Hydrosat", "Lepidext"]
+    )
+    names = [c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)]
+    assert names == ["Agribody", "Holganix", "Hydrosat", "Lepidext"]
+
+
+@pytest.mark.parametrize("tags, country", [
+    ("Crop Science Singapore Food Security", "Singapore"),
+    ("Aquaculture Supply Chain Canada GHG Emissions", "Canada"),
+    ("TYL Europe TYL Latam Precision Ag", None),           # a region, not a country
+    ("Kilimo is a Big Data solution for water management.", None),  # prose
+])
+def test_country_from_tags(tags, country):
+    assert country_from_tags(tags) == country
