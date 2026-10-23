@@ -46,3 +46,6 @@ MAX_HTML_CHARS: int = int(os.getenv("MAX_HTML_CHARS", "12000"))
 # Debugging / Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+# PostgreSQL (scripts/load_db.py). See docker-compose.yml and .env.example
+DATABASE_URL: str = os.getenv("DATABASE_URL", "").strip()
+

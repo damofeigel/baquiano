@@ -1,0 +1,5 @@
+# The image only needs the SQL files. Everything else stays out of the build
+# context, above all .env (API tokens, passwords), .venv and output/.
+*
+!src/db/
+!src/db/**
