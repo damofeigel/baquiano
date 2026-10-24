@@ -24,7 +24,7 @@ class StartupInfo(BaseModel):
     year_created: Optional[int] = None
 
     # Derived / extra context
-    sector: Optional[str] = None          # → technological_areas
+    sector: Optional[str] = None          # the fund's own category label, as shown (not a classification)
     country: Optional[str] = None         # → locations
     funding_round: Optional[str] = None   # → funding_events.round_type
     funding_amount_usd: Optional[float] = None  # → funding_events.amount

@@ -595,6 +595,24 @@ def test_agent_records_are_vetted_for_website_fit_fund_links_and_navigation():
     assert sum("site navigation" in p for p in problems) == 2
 
 
+
+def test_sectors_the_page_does_not_show_are_dropped():
+    """A sector must be the fund's own label: the model's guess from the description is dropped."""
+    evidence = Evidence()
+    evidence.add("### Puna Bio Agri·food·land use Extremophile bacteria for crops "
+                 "### Stämm Programmable biomanufacturing for the food supply chain", is_page=True, url=PORTFOLIO)
+    rec = PortfolioRecorder(evidence=evidence)
+    accepted, problems = rec.check_evidence([
+        StartupInfo(name="Puna Bio", sector="Agri·food·land use"),   # label shown on the card
+        StartupInfo(name="Stämm", sector="biotechnology"),            # guessed from the description
+        StartupInfo(name="Puna Bio", sector="AI"),                    # 'ai' only appears inside 'chain'
+    ])
+
+    assert [(c.name, c.sector) for c in accepted] == [
+        ("Puna Bio", "Agri·food·land use"), ("Stämm", None), ("Puna Bio", None)]
+    assert problems == []                                             # the company itself is kept
+
+
 # --- Tool names with chat-format residue (gpt-oss / harmony) ------------------------
 
 @pytest.mark.parametrize("raw, clean", [

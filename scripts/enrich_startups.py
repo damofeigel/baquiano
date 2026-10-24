@@ -126,10 +126,16 @@ def result_schema(taxonomy: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def fund_labels(startup: dict) -> list[str]:
+    """The funds' own category labels (merged 'sector', all of them when funds disagree)."""
+    return startup.get("conflicts", {}).get("sector") or ([startup["sector"]] if startup.get("sector") else [])
+
+
 def build_messages(startup: dict, pages: list[dict[str, str]], signals: list[str],
                    taxonomy: dict[str, Any]) -> list[dict[str, str]]:
     areas = "\n".join(f"- {key}: {a['label']}" for key, a in taxonomy["areas"].items())
     fund_texts = "\n".join(f"- {d['fund']}: {d['text']}" for d in startup.get("descriptions", []))
+    labels = ", ".join(fund_labels(startup)) or "none"
     page_texts = "\n\n".join(f"### {p['url']}\n{p['text']}" for p in pages) or "(website not available)"
     system = f"""You classify startups for a database of the Argentine deep tech ecosystem.
 Use only the texts given. Never guess.
@@ -154,6 +160,7 @@ Signals found automatically: {', '.join(signals) or 'none'}
 
 How investment funds describe it:
 {fund_texts or '(none)'}
+Category labels funds give it (their own wording, a hint only): {labels}
 
 Its website:
 {page_texts}"""

@@ -2,7 +2,7 @@
 
 Self-hosted agents that browse the web and extract structured data about **deep tech startups in Argentina**, to feed a database mapping the country's innovation ecosystem.
 
-Each URL you give it names the agent that should handle it. Today there is one agent, `portfolio`, which reads an investment fund's website and lists the startups in its portfolio, with their websites, descriptions and sectors. Everything runs locally: a headless Chromium browser (Playwright) and a self-hosted LLM served by vLLM.
+Each URL you give it names the agent that should handle it. Today there is one agent, `portfolio`, which reads an investment fund's website and lists the startups in its portfolio, with their websites and descriptions. Everything runs locally: a headless Chromium browser (Playwright) and a self-hosted LLM served by vLLM.
 
 ---
 
@@ -15,6 +15,7 @@ Each URL you give it names the agent that should handle it. Today there is one a
 - [The portfolio agent](#the-portfolio-agent)
 - [Output](#output)
 - [Merging and enriching startups](#merging-and-enriching-startups)
+- [Database and entity resolution](#database-and-entity-resolution)
 - [Configuration](#configuration)
 - [Adding a new agent](#adding-a-new-agent)
 - [Project structure](#project-structure)
@@ -174,7 +175,7 @@ Done: 8 with results, 1 empty, 1 failed (of 10).
 
 ## The portfolio agent
 
-Given a fund's website (the homepage or the portfolio page itself), it finds the fund's portfolio and records every company with its name, website, description, sector and country, filling in only what the site states.
+Given a fund's website (the homepage or the portfolio page itself), it finds the fund's portfolio and records every company with its name, website, description and country, filling in only what the site states. `sector` is the fund's own category label for the company (a tag or filter on its page), copied as written and dropped if no page shows it; the classification into technology areas comes later, from `enrich_startups.py`.
 
 ### Modes
 
@@ -300,9 +301,49 @@ For each startup it:
 
 Notes:
 - **The categories are in `scripts/taxonomy.json`:** the deep-tech definition given to the model, and each area with whether it counts as deep tech. Edit it to change the classification; `tech_area` can only be one of its keys.
+- **The funds' `sector` labels** are passed to the model as a hint only. `enrichment.tech_area` is the classification to use; `sector` is just what each fund called it.
 - **Startups with no website** are classified from the funds' descriptions alone, which usually means `confidence: low`.
 - **Output:** `output/startups_enriched_<time>.json`, named after the merged file, with each startup's `enrichment` and a `summary` (Argentine, Argentine deep tech, by area).
 - **Progress is saved after every startup,** and a rerun skips the ones already done, because with gpt-oss a full run takes hours.
+
+## Database and entity resolution
+
+The JSON outputs can be loaded into PostgreSQL, where startups from different funds become one **actor** each, with the relationships between them.
+
+### 1. Start the database
+
+```bash
+docker compose up -d        # PostgreSQL 16 on 127.0.0.1:${POSTGRES_PORT}; migrations run on first start
+```
+
+Set `POSTGRES_PASSWORD` and `DATABASE_URL` in `.env` (see `.env.example`). The seed in `src/db/seeds/` contains example actors, so it is only loaded with `DB_LOAD_SEED=true`.
+
+### 2. Load the outputs: `scripts/load_db.py`
+
+```bash
+python scripts/load_db.py                  # latest output of each fund in output/
+python scripts/load_db.py output/a.json    # specific files; --all for every file, --dry-run to change nothing
+```
+
+Every record becomes a **mention**, stored as found. A mention is linked to an actor only when that's certain (the same website domain). If only the name is the same, the mention waits for resolution. If nothing similar exists, a new actor is created. Each startup gets an `Investment` relationship from its fund. Loading the same file twice adds nothing.
+
+### 3. Resolve entities: `scripts/resolve_entities.py`
+
+```bash
+python scripts/resolve_entities.py                    # score candidate pairs; merge/link the sure ones (--dry-run)
+python scripts/resolve_entities.py export             # pairs to review -> output/review.csv
+python scripts/resolve_entities.py apply output/review.csv
+```
+
+- **Candidates:** pairs with similar names or aliases (pg_trgm), both actor pairs the loader created separately ("Heartbest" / "Heartbest Foods") and the mentions it left waiting.
+- **Scoring:** each pair is scored on name (exact, a name plus words like "Foods" or "Labs", contained, similar), description overlap, country, and websites. It also counts against a pair when the same page lists both or their types differ.
+- **Decisions:**
+  - **match:** the mention is linked, or the duplicate actor is merged. Merged actors keep their row (`status = 'merged'`, `merged_into_id`), and their mentions, aliases, identifiers and relationships move to the surviving actor.
+  - **no_match:** recorded, so the pair isn't proposed again.
+  - **unsure:** goes to the `match_review_queue` view.
+- **The same name alone never merges.** A match needs a strong name, some corroboration (overlapping descriptions or the same country) and nothing against it. Newtopia's "Kigui" (retail AI) and The Yield Lab's "Kigüi" (food logistics, Mexico) are two different companies.
+- **Review:** `export` writes each pair with both sides' websites, countries, funds and descriptions. Write `match` or `no_match` in `your_decision` (and optionally `notes`), then `apply`. Your decisions are recorded as `human` and never overridden by a later run.
+- **Thresholds and word lists** are at the top of `src/db/resolution.py`.
 
 ## Configuration
 
@@ -397,6 +438,16 @@ scripts/
   merge_portfolios.py           Merge per-fund outputs into one startup list
   enrich_startups.py            Visit startup websites, classify with the LLM (country, deep tech, area)
   taxonomy.json                 Deep-tech definition and technology areas used by enrich_startups.py
+  load_db.py                    Load portfolio outputs into PostgreSQL
+  resolve_entities.py           Entity resolution: merge duplicates, review queue export/apply
+
+src/db/
+  migrations/                   Schema (run in order on first start of the container)
+  seeds/                        Example data (optional)
+  loader.py                     JSON outputs -> mentions, actors, relationships
+  resolution.py                 Candidate pairs, scoring, merges, human review
+
+Dockerfile, docker-compose.yml  PostgreSQL 16 with the migrations
 
 src/scrappy_project/            Scrapy skeleton (not used yet)
 tests/                          Unit, agent-loop and browser tests (fixtures/ has a local test site)
@@ -413,7 +464,8 @@ pytest -q -m "not live and not browser" # also skip the tests that launch Chromi
 
 - **No GPU, vLLM server or internet needed.** The agent-loop tests drive the real Agents SDK with a scripted fake model, covering batching, `finish`, cut-off tool calls, invented companies and parallel tool calls.
 - **Browser tests** (`-m browser`) start Chromium against a local test site in `tests/fixtures/portfolio_site/`: a homepage, a portfolio with a "Ver más" button, and a second page. They're skipped automatically if Chromium isn't installed.
-- **Markers:** `browser` (local Chromium) and `live` (real websites).
+- **Database tests** (`-m db`) need `TEST_DATABASE_URL`, an admin connection to a throwaway PostgreSQL (they create and drop their own databases); see `tests/conftest.py`. They're skipped when it isn't set.
+- **Markers:** `browser` (local Chromium), `db` (PostgreSQL) and `live` (real websites).
 
 ---
 

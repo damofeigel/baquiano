@@ -73,8 +73,9 @@ media sites (e.g Linkedin, youtube.com, etc)
   Not the fund's profile page, LinkedIn, social media or news.
 - description: one or two sentences on what the company does, from the
   fund's text.
-- sector: e.g. biotechnology, AI, robotics, agtech, energy, aerospace,
-  advanced materials. Only if stated or clear from the description.
+- sector: the category label the fund's page shows for the company (a tag,
+  filter or heading such as "Agtech" or "Health"), copied as written. Never
+  infer it from the description; leave it out when the page shows none.
 - country: only if explicitly stated. Do not assume it from the fund's
   country, the language or the domain.
 - year_created, funding_round, funding_amount_usd (a number in USD),

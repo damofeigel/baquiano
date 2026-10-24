@@ -33,7 +33,7 @@ _COMPANY_FIELDS = {
     "name": "Company name as shown on the page",
     "website": "Company's own website URL, if linked",
     "description": "One sentence on what the company does",
-    "sector": "e.g. biotechnology, AI, agtech, energy",
+    "sector": "Category label the page shows for it, copied as written; never inferred",
     "country": "Only if explicitly stated",
 }
 RECORD_COMPANIES_SCHEMA = {
@@ -200,6 +200,8 @@ class EvidenceLike(Protocol):
 
     def contains(self, text: str) -> bool: ...
 
+    def contains_words(self, text: str) -> bool: ...
+
     def opened(self, url: str) -> bool: ...
 
 
@@ -329,7 +331,9 @@ class PortfolioRecorder:
         Rejects page navigation used as a name and, when evidence is set,
         names that appear on no page that was read. Websites are dropped
         (company kept) when never seen on a page or when they don't plausibly
-        belong to the name, e.g. taken from the neighbouring card.
+        belong to the name, e.g. taken from the neighbouring card. A sector
+        is dropped when no page shows it: it must be the fund's own label,
+        not the model's guess (enrich_startups.py classifies with the taxonomy).
         """
         if self.evidence is not None and self.evidence.pages_read == 0:
             return [], ["No page has been read yet. Read the portfolio page first, "
@@ -352,6 +356,9 @@ class PortfolioRecorder:
             elif domain and not website_matches_name(company.name, company.website or ""):
                 logger.info("Dropping website %s: doesn't match %s", company.website, company.name)
                 company = company.model_copy(update={"website": None})
+            if company.sector and self.evidence is not None and not self.evidence.contains_words(company.sector):
+                logger.info("Dropping unseen sector %r for %s", company.sector, company.name)
+                company = company.model_copy(update={"sector": None})
             accepted.append(company)
         return accepted, problems
 

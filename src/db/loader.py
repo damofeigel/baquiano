@@ -52,7 +52,7 @@ def raw_hash(raw: dict[str, Any]) -> str:
     return hashlib.md5(json.dumps(raw, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-# --- Rows ---------------------------------------------------------------------------
+# Rows 
 
 def upsert_source(conn: psycopg.Connection, url: str, title: str, source_type: str) -> int:
     row = conn.execute(
@@ -122,7 +122,7 @@ def _add_type(conn: psycopg.Connection, actor_id: int, type_name: str | None) ->
         )
 
 
-# --- Resolution -----------------------------------------------------------------------
+#  Resolution 
 
 def resolve_mention(conn: psycopg.Connection, mention_id: int) -> str:
     """Resolve one mention if it's certain. Returns 'linked', 'unsure', 'new_actor' or 'done'."""
@@ -173,17 +173,37 @@ def resolve_mention(conn: psycopg.Connection, mention_id: int) -> str:
         return "unsure"
 
     # 3. Nothing like it yet: a new actor
+    create_actor_for_mention(conn, mention_id)
+    return "new_actor"
 
+
+def create_actor_for_mention(conn: psycopg.Connection, mention_id: int) -> int:
+    """A new actor from a mention, linked to it."""
+    name, domain, website, description, type_hint, source_id = conn.execute(
+        "SELECT name, domain, website, description, actor_type_hint, source_id FROM mentions WHERE id = %s",
+        (mention_id,),
+    ).fetchone()
     new_id = conn.execute(
         "INSERT INTO actors (name, description, website) VALUES (%s, %s, %s) RETURNING id",
         (name, description, website),
     ).fetchone()
     if new_id is None:
-        return f"New actor found but insertion failed"
+        raise ValueError("New actor found but insertion failed")
     new_id = new_id[0]
     _add_domain(conn, new_id, domain, source_id)
     _link(conn, mention_id, new_id, "new_actor", None, name, website, description, type_hint, source_id)
-    return "new_actor"
+    return new_id
+
+
+def link_mention(conn: psycopg.Connection, mention_id: int, actor_id: int, method: str,
+                 score: float | None = None) -> None:
+    """Link a mention to an existing actor (a decision made elsewhere)."""
+    name, domain, website, description, type_hint, source_id = conn.execute(
+        "SELECT name, domain, website, description, actor_type_hint, source_id FROM mentions WHERE id = %s",
+        (mention_id,),
+    ).fetchone()
+    _add_domain(conn, actor_id, domain, source_id)
+    _link(conn, mention_id, actor_id, method, score, name, website, description, type_hint, source_id)
 
 
 def _link(conn: psycopg.Connection, mention_id: int, actor_id: int, method: str, score: float | None,
@@ -259,7 +279,7 @@ def materialize_relationships(conn: psycopg.Connection) -> int:
     return created
 
 
-# --- Portfolio outputs ------------------------------------------------------------------
+# Portfolio outputs
 
 def load_portfolio(conn: psycopg.Connection, data: dict[str, Any], *, fund_site: str, fund_name: str,
                    run_ref: str) -> LoadStats:

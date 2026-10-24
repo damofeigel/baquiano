@@ -110,6 +110,17 @@ def test_enrich_one_end_to_end():
     assert "GRIDX: Extremophile bacteria" in seen["user"]       # fund descriptions are given too
 
 
+
+def test_fund_labels_are_given_as_a_hint():
+    startup = {"name": "Puna Bio", "sector": "Agtech", "conflicts": {"sector": ["Agtech", "Agri·food·land use"]},
+               "descriptions": []}
+    assert es.fund_labels(startup) == ["Agtech", "Agri·food·land use"]
+    assert es.fund_labels({"name": "Stämm", "sector": "Biotech"}) == ["Biotech"]
+    assert es.fund_labels({"name": "Antarka"}) == []
+
+    user = es.build_messages(startup, [], [], TAXONOMY)[1]["content"]
+    assert "Category labels funds give it (their own wording, a hint only): Agtech, Agri·food·land use" in user
+
 def test_no_website_uses_fund_descriptions_only():
     startup = {"name": "Werken Vac", "website": None,
                "descriptions": [{"fund": "GRIDX", "text": "Self-amplifying RNA vaccine for fish"}]}

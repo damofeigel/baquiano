@@ -37,6 +37,11 @@ def _normalize(text: str) -> str:
     return re.sub(r"[\W_]+", "", text.lower())
 
 
+def _words(text: str) -> str:
+    """Lowercase words separated by single spaces, padded so ' x ' matches whole words."""
+    return " " + " ".join(re.findall(r"[^\W_]+", text.lower())) + " "
+
+
 def url_key(url: str) -> str:
     """Comparable form of a URL: no scheme, "www.", trailing slash or #fragment."""
     parts = urlparse(url if "://" in url else f"https://{url}")
@@ -59,6 +64,7 @@ class Evidence:
     def reset(self) -> None:
         self.pages_read = 0
         self._chunks: list[str] = []
+        self._word_chunks: list[str] = []
         self._size = 0
         self._opened: set[str] = set()
         self._attempted: set[str] = set()
@@ -72,13 +78,20 @@ class Evidence:
                 self._opened.add(url_key(url))
         chunk = _normalize(text)
         self._chunks.append(chunk)
+        self._word_chunks.append(_words(text))
         self._size += len(chunk)
         while self._size > self.MAX_CHARS and len(self._chunks) > 1:
             self._size -= len(self._chunks.pop(0))
+            self._word_chunks.pop(0)
 
     def contains(self, text: str) -> bool:
         key = _normalize(text)
         return len(key) >= 2 and any(key in chunk for chunk in self._chunks)
+
+    def contains_words(self, text: str) -> bool:
+        """Like contains, but whole words only: 'AI' is not found inside 'chain'."""
+        key = _words(text)
+        return key.strip() != "" and any(key in chunk for chunk in self._word_chunks)
 
     def mark_attempted(self, url: str) -> None:
         self._attempted.add(url_key(url))
