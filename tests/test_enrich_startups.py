@@ -10,6 +10,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import enrich_startups as es  # noqa: E402
+import pytest  # noqa: E402
 
 TAXONOMY = json.loads(es.TAXONOMY_FILE.read_text())
 
@@ -48,7 +49,7 @@ def test_reads_homepage_and_about_page():
 
 def test_unreachable_site_is_reported_not_raised():
     pages, status = es.collect_pages(FakeBrowser({}), "https://gone.example")
-    assert pages == [] and status == "unreachable: TimeoutError"
+    assert pages == [] and status == "unreachable: TimeoutError: https://gone.example"
 
 
 def test_argentina_signals():
@@ -163,3 +164,53 @@ def test_check_llm_reports_a_model_the_server_does_not_serve():
     client = SimpleNamespace(models=FakeModels(ids=["openai/gpt-oss-20b"]))
     assert "It serves: openai/gpt-oss-20b" in es.check_llm(client, "meta-llama/Llama-3.1-8B-Instruct")
     assert es.check_llm(client, "openai/gpt-oss-20b") is None
+
+
+# --- Hints, reuse and error detail -------------------------------------------------------------
+
+@pytest.mark.parametrize("enrichment, country, likely", [
+    ({"country": None, "argentina_signals": [".ar domain"]}, None, "Argentina"),
+    ({"country": None, "argentina_signals": ["phone +54", "Argentine city"]}, None, "Argentina"),
+    ({"country": None, "argentina_signals": ["mentions Argentina", "Argentine city"]}, None, None),  # weak
+    ({"country": "USA", "argentina_signals": [".ar domain"]}, "United States", "United States"),     # stated wins
+    ({"country": "Argentina", "argentina_signals": []}, "Argentina", "Argentina"),
+    ({"country": None}, None, None),
+])
+def test_country_hints(enrichment, country, likely):
+    hinted = es.add_hints(dict(enrichment))
+    assert (hinted["country"], hinted["country_likely"]) == (country, likely)
+
+
+def test_likely_argentine_startups_are_counted_apart():
+    startups = [{"enrichment": {"country": "Argentina", "deep_tech": True}},
+                {"enrichment": {"country": None, "country_likely": "Argentina", "deep_tech": True}},
+                {"enrichment": {"country": None, "country_likely": None, "deep_tech": False}}]
+    summary = es.summarize(startups)
+    assert (summary["argentina"], summary["argentina_likely"], summary["argentina_likely_deep_tech"]) == (1, 1, 1)
+
+
+def test_earlier_results_are_reused_by_name_or_website(tmp_path):
+    old = tmp_path / "startups_enriched_old.json"
+    old.write_text(json.dumps({"startups": [
+        {"name": "Exited", "website": "http://www.agribodytech.com", "enrichment": {"tech_area": "biotech_agri_food"}},
+        {"name": "Kilimo", "aliases": ["KILIMO"], "enrichment": {"tech_area": "agtech_digital"}},
+        {"name": "Never enriched"},
+    ]}))
+    startups = [{"name": "Agribodytech", "website": "https://agribodytech.com/"},   # renamed since
+                {"name": "kilimo", "aliases": ["kilimo"]},
+                {"name": "Never enriched"},
+                {"name": "Puna Bio"}]
+    done = {"Puna Bio": {"name": "Puna Bio", "enrichment": {"tech_area": "x"}}}
+
+    assert es.reuse_previous(startups, [old], done) == 2
+    assert done["Agribodytech"]["enrichment"]["tech_area"] == "biotech_agri_food"
+    assert done["kilimo"]["enrichment"]["tech_area"] == "agtech_digital"
+    assert "Never enriched" not in done and done["Puna Bio"]["enrichment"]["tech_area"] == "x"
+
+
+def test_unreachable_site_keeps_the_error_message():
+    class Failing:
+        def go_to(self, url):
+            raise RuntimeError("net::ERR_NAME_NOT_RESOLVED at https://calfix.bio/\nCall log: ...")
+    pages, status = es.collect_pages(Failing(), "https://calfix.bio/")
+    assert pages == [] and status == "unreachable: RuntimeError: net::ERR_NAME_NOT_RESOLVED at https://calfix.bio/"

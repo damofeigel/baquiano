@@ -14,6 +14,11 @@ portfolio agent uses within a run. Each merged startup lists every fund and
 source page it came from; fields that disagree between funds are kept under
 "conflicts" instead of being silently overwritten.
 
+Cleaning on the way in: a fund's regional sister site counts as the same fund
+(theyieldlablatam.com is The Yield Lab); a sector tag or badge recorded as a
+name ("AI & SaaS", "Exited") is renamed from the startup's website, or dropped
+when it has none; countries get one spelling ("USA" -> "United States").
+
 Writes output/startups_merged_<time>.json and a .csv next to it.
 """
 from __future__ import annotations
@@ -30,7 +35,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.core.matching import dedupe_key, same_company_name, website_domain  # noqa: E402
+from src.core.matching import (  # noqa: E402
+    dedupe_key, looks_like_category, name_from_website, normalize_country, same_company_name, sister_of,
+    website_domain,
+)
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
 STAMP = re.compile(r"_(\d{8}-\d{6})(?:-\d+)?\.json$")
@@ -65,7 +73,9 @@ def fund_names(inputs: list[Path]) -> dict[Path, str]:
     """One display name per fund site, from its newest file.
 
     Runs of the same fund can name it differently ("Grid Exponential" from the
-    agent, "GRIDX" from the pre-pass); without this, --all lists it twice.
+    agent, "GRIDX" from the pre-pass); without this, --all lists it twice. A
+    regional sister site takes its main site's name ("The Yield Lab Latam" ->
+    "The Yield Lab"), since the main site's run already follows its sisters.
     """
     newest: dict[str, tuple[str, str]] = {}
     for path in inputs:
@@ -73,7 +83,35 @@ def fund_names(inputs: list[Path]) -> dict[Path, str]:
         name = json.loads(path.read_text(encoding="utf-8")).get("fund_name") or "Unknown"
         if name != "Unknown" and (site not in newest or stamp > newest[site][0]):
             newest[site] = (stamp, name)
-    return {path: newest.get(fund_site(path)[0], ("", "Unknown"))[1] for path in inputs}
+    sites = sorted({fund_site(path)[0] for path in inputs})
+
+    def name_of(site: str) -> str:
+        parent = sister_of(site, sites)
+        if parent and parent in newest:
+            return newest[parent][1]
+        return newest.get(site, ("", "Unknown"))[1]
+
+    return {path: name_of(fund_site(path)[0]) for path in inputs}
+
+
+def clean_startup(startup: dict) -> tuple[dict | None, str | None]:
+    """(the record to merge or None to drop it, a note on what changed).
+
+    A tag or badge read as the name ("AI & SaaS", "Exited") is replaced by a
+    name from the startup's website; without one there is nothing to identify.
+    """
+    startup = {**startup, "country": normalize_country(startup.get("country"))}
+    name = startup["name"]
+    if not looks_like_category(name, startup.get("sector")):
+        return startup, None
+    better = name_from_website(startup.get("website"))
+    if not better:
+        return None, f"dropped '{name}': a category, not a company name, and no website"
+    description = startup.get("description")
+    if description and description.strip().casefold() == name.strip().casefold():
+        description = None                       # the tag repeated as a description
+    return ({**startup, "name": better, "description": description, "renamed_from": name},
+            f"renamed '{name}' to '{better}' (from {startup.get('website')})")
 
 
 def find_inputs(paths: list[Path], include_all: bool) -> list[Path]:
@@ -104,14 +142,21 @@ def find_match(merged: list[dict], startup: dict) -> dict | None:
     return None
 
 
-def merge(inputs: list[Path]) -> list[dict]:
+def merge(inputs: list[Path], notes: list[str] | None = None) -> list[dict]:
+    """Merged startups; what cleaning changed is appended to NOTES."""
+    notes = [] if notes is None else notes
     merged: list[dict] = []
     names = fund_names(inputs)
     for path in inputs:
         data = json.loads(path.read_text(encoding="utf-8"))
         fund = names[path]
-        for startup in data["startups"]:
-            if not startup.get("name"):
+        for raw in data["startups"]:
+            if not raw.get("name"):
+                continue
+            startup, note = clean_startup(raw)
+            if note:
+                notes.append(f"{fund}: {note}")
+            if startup is None:
                 continue
             entry = find_match(merged, startup)
             if entry is None:
@@ -121,6 +166,8 @@ def merge(inputs: list[Path]) -> list[dict]:
                     **{field: None for field in FIELDS},
                 }
                 merged.append(entry)
+            if startup.get("renamed_from"):
+                entry.setdefault("renamed_from", []).append(startup["renamed_from"])
             if startup["name"] not in entry["aliases"]:
                 entry["aliases"].append(startup["name"])
             if fund not in entry["funds"]:
@@ -183,7 +230,8 @@ def main() -> None:
     inputs = find_inputs(args.files, args.all)
     if not inputs:
         sys.exit("No portfolio output files found.")
-    startups = merge(inputs)
+    notes: list[str] = []
+    startups = merge(inputs, notes)
 
     out = args.out or OUTPUT_DIR / f"startups_merged_{datetime.now():%Y%m%d-%H%M%S}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -199,8 +247,10 @@ def main() -> None:
             "argentina": countries.get("Argentina", 0),
             "country_unknown": countries.get("unknown", 0),
             "with_conflicts": len(conflicted),
+            "cleaned": len(notes),
             "by_country": dict(countries.most_common()),
         },
+        "cleaning": notes,
         "startups": startups,
     }
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -213,6 +263,10 @@ def main() -> None:
           f"  | country unknown: {countries.get('unknown', 0)}  | with conflicts: {len(conflicted)}")
     for s in multi[:10]:
         print(f"    {s['name']}: {', '.join(s['funds'])}")
+    if notes:
+        print(f"  cleaned {len(notes)} record(s):")
+        for note in notes:
+            print(f"    {note}")
 
 
 if __name__ == "__main__":

@@ -9,12 +9,15 @@
 - [ ] Load enrichment results (`tech_area`, country, year) and patents into the database
 - [ ] Measure enrichment quality on 10 to 30 hand-labelled startups before the full run
 - [ ] Rerun the agent-mode funds so their outputs drop the old guessed sectors
+- [ ] Finish enrichment: 116 startups with unknown country not yet done (`enrich_startups.py output/startups_merged_20261028-cleaned.json`)
+- [ ] Crawler: reject tag/badge names at record time too (17 Sigma), once `src/custom_agents/` is back
 - [ ] Report sister sites that return nothing (The Yield Lab Asia gave 68 instead of 123)
 - [ ] Lens patents: the script was removed and the API token is refused
 - [ ] Clean up `targets.txt`
 
 ### Done
 
+- [x] Results cleanup: tag names dropped/renamed, sister sites as one fund, one spelling per country, `country_likely` from .ar/+54, `--previous` reuse, full site error messages
 - [x] Entity resolution step 4: LLM judge for review pairs, applied only with verified quotes (`resolve_entities.py judge`)
 - [x] Manage startups sectors: `sector` keeps only the fund's own label (dropped if no page shows it); `enrichment.tech_area` from `taxonomy.json` is the classification
 - [x] Entity resolution v1: candidates, scoring, merges, review CSV export/apply (`scripts/resolve_entities.py`)

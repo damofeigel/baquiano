@@ -282,7 +282,10 @@ python scripts/merge_portfolios.py output/a.json output/b.json
 - **The same startup in several funds becomes one entry.** It's matched by website domain, then by name (case, accents and punctuation ignored, plus variants like "Heartbest" / "Heartbest Foods"). Beeflow, in both GRIDX and The Yield Lab, becomes one startup with `funds: ["GRIDX", "The Yield Lab"]`.
 - **Every description is kept** in `descriptions`, one per fund, and the longest becomes `description`.
 - **Fields that disagree between funds aren't overwritten.** They're listed under `conflicts`.
-- **Output:** `output/startups_merged_<time>.json` with a `summary` (startups, in several funds, Argentine, country unknown, with conflicts), plus a `.csv` to open in a spreadsheet.
+- **A regional sister site is the same fund.** `theyieldlablatam.com` counts as The Yield Lab, whose own run already follows its regional sites; otherwise every Latam startup would look like it's in two funds.
+- **Tags and badges read as names are cleaned up.** Some portfolio pages show logos with a tag, so a crawl can record "AI & SaaS" or "Exited" as a name. Such a record is renamed from its website ("Exited" with agribodytech.com becomes "Agribodytech") or dropped when it has none. Each change is listed under `cleaning` in the output and printed.
+- **Countries get one spelling:** "USA", "U.S.A." and "EE.UU." all become "United States".
+- **Output:** `output/startups_merged_<time>.json` with a `summary` (startups, in several funds, Argentine, country unknown, with conflicts, cleaned), plus a `.csv` to open in a spreadsheet.
 
 ### 2. Enrich and classify: `scripts/enrich_startups.py`
 
@@ -291,6 +294,7 @@ python scripts/enrich_startups.py                         # latest merged file; 
 python scripts/enrich_startups.py --limit 20              # in batches; a rerun continues where it stopped
 python scripts/enrich_startups.py --names "Puna Bio" Beeflow
 python scripts/enrich_startups.py --all                   # also startups known to be outside Argentina
+python scripts/enrich_startups.py output/startups_merged_<new>.json --previous output/startups_enriched_<old>.json
 ```
 
 For each startup it:
@@ -302,6 +306,8 @@ For each startup it:
 Notes:
 - **The categories are in `scripts/taxonomy.json`:** the deep-tech definition given to the model, and each area with whether it counts as deep tech. Edit it to change the classification; `tech_area` can only be one of its keys.
 - **The funds' `sector` labels** are passed to the model as a hint only. `enrichment.tech_area` is the classification to use; `sector` is just what each fund called it.
+- **`country` is only what a page states;** `country_likely` adds "Argentina" when nothing is stated but the site has a `.ar` domain or a +54 phone number. Mentioning Argentina or an Argentine city isn't enough for it, since partners and clients do that too. The summary counts these separately (`argentina_likely`).
+- **After a new merge, reuse earlier results** with `--previous`: startups are matched by name or website, so only new ones are sent to the model. `--limit 0` just refreshes an output (country spelling, `country_likely`, the summary) without a model.
 - **Startups with no website** are classified from the funds' descriptions alone, which usually means `confidence: low`.
 - **Output:** `output/startups_enriched_<time>.json`, named after the merged file, with each startup's `enrichment` and a `summary` (Argentine, Argentine deep tech, by area).
 - **Progress is saved after every startup,** and a rerun skips the ones already done, because with gpt-oss a full run takes hours.

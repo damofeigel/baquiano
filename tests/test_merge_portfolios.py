@@ -80,3 +80,54 @@ def test_same_fund_named_differently_across_runs_is_one_fund(tmp_path):
     merged = {s["name"]: s for s in mp.merge([old, new, unnamed])}
     assert merged["Beeflow"]["funds"] == ["GRIDX"]          # newest run's name
     assert merged["Aviva"]["funds"] == ["Unknown"]
+
+
+# --- Cleaning on the way in ------------------------------------------------------------------
+
+def test_category_tags_read_as_names_are_renamed_or_dropped(tmp_path):
+    """Replays 17 Sigma (logo cards with a tag) and The Yield Lab's "Exited" badge."""
+    sigma = _fund(tmp_path / "17sigma.vc_20261022-134710.json", "17 Sigma", [
+        {"name": "AI & SaaS", "sector": "AI & SaaS", "description": "AI & SaaS"},
+        {"name": "Exit FinTech", "sector": "FinTech", "description": "FinTech"},
+        {"name": "Web3", "sector": "Web3"},
+        {"name": "Energy", "website": "https://www.lioraenergia.com.br/", "sector": "Energy", "description": "Energy"},
+    ])
+    yield_lab = _fund(tmp_path / "theyieldlab.com_20261014-234417.json", "The Yield Lab", [
+        {"name": "Exited", "website": "http://www.agribodytech.com", "description": "Crop science startup"},
+        {"name": "Kilimo", "website": "https://kilimo.com"},
+    ])
+    notes: list[str] = []
+    merged = {s["name"]: s for s in mp.merge([sigma, yield_lab], notes)}
+
+    assert set(merged) == {"Lioraenergia", "Agribodytech", "Kilimo"}
+    assert merged["Lioraenergia"]["description"] is None                 # the tag repeated as description
+    assert merged["Lioraenergia"]["renamed_from"] == ["Energy"]
+    assert merged["Agribodytech"]["description"] == "Crop science startup"
+    assert "Exited" not in merged["Agribodytech"]["aliases"]             # a badge must never match others
+    assert len(notes) == 5
+    assert "17 Sigma: dropped 'AI & SaaS': a category, not a company name, and no website" in notes
+
+
+def test_a_regional_sister_site_is_the_same_fund(tmp_path):
+    main = _fund(tmp_path / "theyieldlab.com_20261014-234417.json", "The Yield Lab", [
+        {"name": "Kigüi", "website": None}, {"name": "Beeflow", "website": "https://beeflow.com"}])
+    latam = _fund(tmp_path / "theyieldlablatam.com_20261022-151120.json", "The Yield Lab Latam", [
+        {"name": "Kigüi", "website": None}, {"name": "Verqor"}])
+    gridx = _fund(tmp_path / "gridexponential.com_20261022-123056.json", "GRIDX", [
+        {"name": "Beeflow", "website": "https://beeflow.com"}])
+
+    assert set(mp.fund_names([main, latam, gridx]).values()) == {"The Yield Lab", "GRIDX"}
+    merged = {s["name"]: s for s in mp.merge([main, latam, gridx])}
+    assert merged["Kigüi"]["funds"] == ["The Yield Lab"]                  # not "in two funds"
+    assert merged["Verqor"]["funds"] == ["The Yield Lab"]
+    assert merged["Beeflow"]["funds"] == ["The Yield Lab", "GRIDX"]
+
+
+def test_countries_get_one_spelling(tmp_path):
+    a = _fund(tmp_path / "a_20261001-000000.json", "Fund A", [
+        {"name": "Acme", "country": "USA"}, {"name": "Brava", "country": "Brasil"}])
+    b = _fund(tmp_path / "b_20261001-000000.json", "Fund B", [{"name": "ACME", "country": "United States"}])
+    merged = {s["name"]: s for s in mp.merge([a, b])}
+
+    assert merged["Acme"]["country"] == "United States" and merged["Acme"]["conflicts"] == {}
+    assert merged["Brava"]["country"] == "Brazil"

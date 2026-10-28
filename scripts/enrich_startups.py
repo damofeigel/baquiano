@@ -36,6 +36,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core import config  # noqa: E402
+from src.core.matching import normalize_country, website_domain  # noqa: E402
 from src.core.structured_llm import (  # noqa: E402,F401  (re-exported for tests)
     Classifier, check_llm, make_llm_classifier, parse_json, quote_found,
 )
@@ -71,7 +72,8 @@ def collect_pages(browser: Any, website: str) -> tuple[list[dict[str, str]], str
     try:
         home = browser.go_to(website)
     except Exception as exc:
-        return [], f"unreachable: {type(exc).__name__}"
+        detail = (str(exc).strip().splitlines() or [""])[0][:160]
+        return [], f"unreachable: {type(exc).__name__}" + (f": {detail}" if detail else "")
     pages = [{"url": home.url or website, "text": home.plain_text[:HOME_CHARS]}]
     if not home.plain_text.strip():
         return pages, "empty"
@@ -187,6 +189,20 @@ def verify(result: dict[str, Any], texts: list[str], taxonomy: dict[str, Any]) -
     return result
 
 
+# Signals strong enough to say "likely Argentine" when no text states the country
+STRONG_SIGNALS = {".ar domain", "phone +54"}
+
+
+def add_hints(enrichment: dict[str, Any]) -> dict[str, Any]:
+    """One spelling per country, and country_likely = "Argentina" when the model found no
+    stated country but the site has a .ar domain or a +54 phone number. country itself
+    stays as checked against the pages."""
+    enrichment["country"] = normalize_country(enrichment.get("country"))
+    strong = STRONG_SIGNALS & set(enrichment.get("argentina_signals") or [])
+    enrichment["country_likely"] = enrichment["country"] or ("Argentina" if strong else None)
+    return enrichment
+
+
 def enrich_one(startup: dict, browser: Any, classify: Classifier, taxonomy: dict[str, Any]) -> dict[str, Any]:
     pages, status = collect_pages(browser, startup["website"]) if startup.get("website") else ([], "no website")
     fund_texts = [d["text"] for d in startup.get("descriptions", [])]
@@ -194,13 +210,13 @@ def enrich_one(startup: dict, browser: Any, classify: Classifier, taxonomy: dict
     signals = argentina_signals(startup.get("website"), [p["text"] for p in pages])
     result = classify(build_messages(startup, pages, signals, taxonomy), result_schema(taxonomy))
     result = verify(result, texts, taxonomy)
-    return {
+    return add_hints({
         **result,
         "argentina_signals": signals,
         "website_status": status,
         "pages_read": [p["url"] for p in pages],
         "enriched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
+    })
 
 
 #  Running over a merged file --
@@ -213,6 +229,32 @@ def select(startups: list[dict], include_all: bool, names: list[str]) -> list[di
     if include_all:
         return startups
     return [s for s in startups if (s.get("country") or "Argentina") == "Argentina"]
+
+
+def reuse_previous(startups: list[dict], files: list[Path], done: dict[str, dict]) -> int:
+    """Copy enrichments from earlier enriched files into DONE, for startups not done yet,
+    matched by name (any alias) or website domain. Returns how many were reused."""
+    by_key: dict[str, dict] = {}
+    for path in files:
+        for old in json.loads(path.read_text(encoding="utf-8"))["startups"]:
+            if not old.get("enrichment"):
+                continue
+            for alias in [old["name"], *old.get("aliases", [])]:
+                by_key.setdefault(f"name:{alias.casefold()}", old["enrichment"])
+            if domain := website_domain(old.get("website")):
+                by_key.setdefault(f"domain:{domain}", old["enrichment"])
+    reused = 0
+    for startup in startups:
+        if startup["name"] in done:
+            continue
+        keys = [f"name:{a.casefold()}" for a in [startup["name"], *startup.get("aliases", [])]]
+        if domain := website_domain(startup.get("website")):
+            keys.insert(0, f"domain:{domain}")
+        found = next((by_key[k] for k in keys if k in by_key), None)
+        if found:
+            done[startup["name"]] = {**startup, "enrichment": found}
+            reused += 1
+    return reused
 
 
 def latest_merged() -> Path | None:
@@ -228,6 +270,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, help="Process at most N startups this run")
     parser.add_argument("--taxonomy", type=Path, default=TAXONOMY_FILE)
     parser.add_argument("--out", type=Path, help="Output file (default: output/startups_enriched_<time>.json)")
+    parser.add_argument("--previous", type=Path, nargs="+", default=[],
+                        help="Earlier enriched files: reuse their results (matched by name or website)")
     args = parser.parse_args()
 
     merged_path = args.merged or latest_merged()
@@ -241,10 +285,28 @@ def main() -> None:
     done: dict[str, dict] = {}
     if out.exists():
         done = {s["name"]: s for s in json.loads(out.read_text(encoding="utf-8"))["startups"] if s.get("enrichment")}
+    reused = reuse_previous(merged["startups"], args.previous, done)
     todo = [s for s in select(merged["startups"], args.all, args.names) if s["name"] not in done]
     if args.limit is not None:
         todo = todo[: args.limit]
-    print(f"{len(done)} already enriched, {len(todo)} to do -> {out}")
+    print(f"{len(done)} already enriched ({reused} from earlier files), {len(todo)} to do -> {out}")
+
+    result = {"enriched_at": None, "source": str(merged_path), "taxonomy": str(args.taxonomy), "startups": []}
+
+    def save() -> None:
+        for entry in done.values():
+            add_hints(entry["enrichment"])     # also brings results from older runs up to date
+        startups = [done.get(s["name"], s) for s in merged["startups"]]
+        result["enriched_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        result["startups"] = startups
+        result["summary"] = summarize(startups)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if not todo:
+        save()
+        print(json.dumps(result["summary"], indent=2))
+        return
 
     import openai
     from src.core.browser import BrowserManager
@@ -257,15 +319,6 @@ def main() -> None:
     # visiting every website for nothing (progress is saved; a rerun resumes)
     fatal = (openai.APIConnectionError, openai.AuthenticationError, openai.PermissionDeniedError,
              openai.NotFoundError, openai.BadRequestError)
-    result = {"enriched_at": None, "source": str(merged_path), "taxonomy": str(args.taxonomy), "startups": []}
-
-    def save() -> None:
-        startups = [done.get(s["name"], s) for s in merged["startups"]]
-        result["enriched_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        result["startups"] = startups
-        result["summary"] = summarize(startups)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with BrowserManager() as browser:
         for i, startup in enumerate(todo, 1):
@@ -291,10 +344,13 @@ def main() -> None:
 def summarize(startups: list[dict]) -> dict[str, Any]:
     enriched = [s["enrichment"] for s in startups if s.get("enrichment")]
     argentine = [e for e in enriched if e.get("country") == "Argentina"]
+    likely = [e for e in enriched if not e.get("country") and e.get("country_likely") == "Argentina"]
     return {
         "enriched": len(enriched),
         "argentina": len(argentine),
         "argentina_deep_tech": sum(1 for e in argentine if e.get("deep_tech")),
+        "argentina_likely": len(likely),
+        "argentina_likely_deep_tech": sum(1 for e in likely if e.get("deep_tech")),
         "deep_tech": sum(1 for e in enriched if e.get("deep_tech")),
         "by_area": dict(Counter(e.get("tech_area") for e in enriched).most_common()),
         "country_unknown": sum(1 for e in enriched if not e.get("country")),
