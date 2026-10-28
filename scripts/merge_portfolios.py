@@ -163,13 +163,19 @@ def merge(inputs: list[Path], notes: list[str] | None = None) -> list[dict]:
                 entry = {
                     "name": startup["name"], "aliases": [], "description": None, "descriptions": [],
                     "funds": [], "sources": [], "conflicts": {}, "_domains": set(),
+                    "_name_from_website": bool(startup.get("renamed_from")),
                     **{field: None for field in FIELDS},
                 }
                 merged.append(entry)
             if startup.get("renamed_from"):
-                entry.setdefault("renamed_from", []).append(startup["renamed_from"])
-            if startup["name"] not in entry["aliases"]:
-                entry["aliases"].append(startup["name"])
+                if startup["renamed_from"] not in entry.setdefault("renamed_from", []):
+                    entry["renamed_from"].append(startup["renamed_from"])
+            else:
+                if entry["_name_from_website"]:
+                    # A real name from another fund beats one made from the domain
+                    entry["name"], entry["_name_from_website"] = startup["name"], False
+                if startup["name"] not in entry["aliases"]:
+                    entry["aliases"].append(startup["name"])
             if fund not in entry["funds"]:
                 entry["funds"].append(fund)
             source = startup.get("source_url") or data.get("source_url")
@@ -194,7 +200,7 @@ def merge(inputs: list[Path], notes: list[str] | None = None) -> list[dict]:
         # The longest description is usually the most informative
         if entry["descriptions"]:
             entry["description"] = max((d["text"] for d in entry["descriptions"]), key=len)
-        del entry["_domains"]
+        del entry["_domains"], entry["_name_from_website"]
     return sorted(merged, key=lambda e: e["name"].casefold())
 
 

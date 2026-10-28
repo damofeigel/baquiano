@@ -131,3 +131,27 @@ def test_countries_get_one_spelling(tmp_path):
 
     assert merged["Acme"]["country"] == "United States" and merged["Acme"]["conflicts"] == {}
     assert merged["Brava"]["country"] == "Brazil"
+
+
+def test_a_real_name_from_another_fund_replaces_one_made_from_the_website(tmp_path):
+    sigma = _fund(tmp_path / "17sigma.vc_20261022-134710.json", "17 Sigma", [
+        {"name": "Energy", "website": "https://www.lioraenergia.com.br/", "sector": "Energy"}])
+    other = _fund(tmp_path / "kaszek.com_20261022-141546.json", "Kaszek", [
+        {"name": "Liora Energia", "website": "https://lioraenergia.com.br", "description": "Solar for farms"}])
+    again = _fund(tmp_path / "nxtp.vc_20261022-125406.json", "NXTP", [
+        {"name": "Energy", "website": "https://lioraenergia.com.br", "sector": "Energy"}])
+
+    [liora] = mp.merge([sigma, other, again])
+
+    assert liora["name"] == "Liora Energia"                     # though 17 Sigma created the entry
+    assert liora["aliases"] == ["Liora Energia"]                # the made-up name is not an alias
+    assert liora["renamed_from"] == ["Energy"]                  # once, though two funds had the tag
+    assert liora["funds"] == ["17 Sigma", "Kaszek", "NXTP"]
+    assert "_name_from_website" not in liora
+
+
+def test_a_name_made_from_the_website_stays_when_no_fund_gives_a_real_one(tmp_path):
+    sigma = _fund(tmp_path / "17sigma.vc_20261022-134710.json", "17 Sigma", [
+        {"name": "Energy", "website": "https://www.lioraenergia.com.br/", "sector": "Energy"}])
+    [liora] = mp.merge([sigma])
+    assert (liora["name"], liora["aliases"]) == ("Lioraenergia", [])
