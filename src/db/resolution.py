@@ -34,7 +34,9 @@ from typing import Any
 import psycopg
 from psycopg import sql
 
-from .loader import GENERIC_DOMAINS, _add_alias, create_actor_for_mention, link_mention, materialize_relationships
+from src.core.matching import is_shared_site
+
+from .loader import _add_alias, create_actor_for_mention, link_mention, materialize_relationships
 
 # Blocking: pairs below these are never compared
 SIMILARITY_THRESHOLD = 0.45        # similarity() between two names
@@ -285,7 +287,7 @@ def mention_profile(conn: psycopg.Connection, mention_id: int) -> Profile:
         """SELECT name, name_norm, domain, country, description, actor_type_hint, source_id
            FROM mentions WHERE id = %s""", (mention_id,)).fetchone()
     p = Profile("mention", mention_id, name, [name_norm] if name_norm else [], mentions=1)
-    if domain and domain not in GENERIC_DOMAINS:
+    if domain and not is_shared_site(domain):
         p.domains.add(domain)
     if _country(country):
         p.countries.add(_country(country))

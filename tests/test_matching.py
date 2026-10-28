@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.matching import looks_like_category, name_from_website, normalize_country, sister_of
+from src.core.matching import (
+    company_domain, is_shared_site, looks_like_category, name_from_website, normalize_country, sister_of,
+)
 
 
 @pytest.mark.parametrize("name, sector", [
@@ -53,6 +55,31 @@ def test_normalize_country(raw, country):
     ("gridx.co", ["gridexponential.com"], None),
     ("500global.com", ["500.co"], None),                            # "500" is too short to claim others
     ("alaya-capital.com", ["alayacapital.com"], None),
+    ("theyieldlab-asia.com", ["theyieldlab.com"], "theyieldlab.com"),        # region after a hyphen
+    ("argentinatech.com", ["argentina.gob.ar"], None),                      # a prefix is not a region
+    ("argentinaventures.vc", ["argentina.gob.ar"], None),
+    ("drapercygnus.com", ["draper.vc"], None),
+    ("kaszeklatam.com", ["kaszek.com", "gridexponential.com"], "kaszek.com"),
 ])
 def test_sister_sites(site, others, parent):
     assert sister_of(site, others) == parent
+
+
+@pytest.mark.parametrize("url, domain", [
+    ("https://www.beeflow.com/", "beeflow.com"),
+    ("puna.bio", "puna.bio"),                                   # no scheme
+    ("https://www.linkedin.com/company/acme", None),
+    ("https://ar.linkedin.com/in/someone", None),               # a platform's subdomain
+    ("https://acme.medium.com/post", None),
+    ("https://sites.google.com/view/acme", None),
+    ("https://acme.wixsite.com/home", None),
+    ("https://linkedinsights.io", "linkedinsights.io"),         # only a name that looks like one
+    (None, None), ("", None),
+])
+def test_company_domain(url, domain):
+    assert company_domain(url) == domain
+
+
+def test_is_shared_site():
+    assert is_shared_site("linkedin.com") and is_shared_site("es.linkedin.com")
+    assert not is_shared_site("notlinkedin.com") and not is_shared_site(None)

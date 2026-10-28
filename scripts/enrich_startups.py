@@ -36,7 +36,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core import config  # noqa: E402
-from src.core.matching import normalize_country, website_domain  # noqa: E402
+from src.core.matching import company_domain, normalize_country  # noqa: E402
 from src.core.structured_llm import (  # noqa: E402,F401  (re-exported for tests)
     Classifier, check_llm, make_llm_classifier, parse_json, quote_found,
 )
@@ -232,27 +232,36 @@ def select(startups: list[dict], include_all: bool, names: list[str]) -> list[di
 
 
 def reuse_previous(startups: list[dict], files: list[Path], done: dict[str, dict]) -> int:
-    """Copy enrichments from earlier enriched files into DONE, for startups not done yet,
-    matched by name (any alias) or website domain. Returns how many were reused."""
-    by_key: dict[str, dict] = {}
+    """Copy enrichments from earlier enriched files into DONE, for startups not done yet.
+
+    Matched by the company's own website domain (a LinkedIn or Google Sites link
+    identifies nobody), else by name (any alias), but never across two different
+    domains: "Nova" at nova.com is not "Nova" at nova.com.ar. Returns how many were reused."""
+    by_domain: dict[str, dict] = {}
+    by_name: dict[str, dict] = {}
     for path in files:
         for old in json.loads(path.read_text(encoding="utf-8"))["startups"]:
             if not old.get("enrichment"):
                 continue
+            if domain := company_domain(old.get("website")):
+                by_domain.setdefault(domain, old)
             for alias in [old["name"], *old.get("aliases", [])]:
-                by_key.setdefault(f"name:{alias.casefold()}", old["enrichment"])
-            if domain := website_domain(old.get("website")):
-                by_key.setdefault(f"domain:{domain}", old["enrichment"])
+                by_name.setdefault(alias.casefold(), old)
     reused = 0
     for startup in startups:
         if startup["name"] in done:
             continue
-        keys = [f"name:{a.casefold()}" for a in [startup["name"], *startup.get("aliases", [])]]
-        if domain := website_domain(startup.get("website")):
-            keys.insert(0, f"domain:{domain}")
-        found = next((by_key[k] for k in keys if k in by_key), None)
+        domain = company_domain(startup.get("website"))
+        found = by_domain.get(domain) if domain else None
+        if found is None:
+            for alias in [startup["name"], *startup.get("aliases", [])]:
+                candidate = by_name.get(alias.casefold())
+                old_domain = company_domain(candidate.get("website")) if candidate else None
+                if candidate and not (domain and old_domain and domain != old_domain):
+                    found = candidate
+                    break
         if found:
-            done[startup["name"]] = {**startup, "enrichment": found}
+            done[startup["name"]] = {**startup, "enrichment": dict(found["enrichment"])}   # a copy per startup
             reused += 1
     return reused
 

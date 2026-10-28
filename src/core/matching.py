@@ -56,10 +56,23 @@ CATEGORY_WORDS = {
     "web3", "crypto", "blockchain", "energy", "mobility", "logistics", "marketplace", "b2b", "b2c", "iot",
     "exit", "exited", "acquired", "ipo", "portfolio", "startup", "startups", "other", "others", "all", "and",
 }
+# Shared platforms: a link to one of these doesn't identify a company
 GENERIC_SITES = {
     "linkedin.com", "facebook.com", "instagram.com", "x.com", "twitter.com", "youtube.com", "github.com",
-    "medium.com", "google.com", "sites.google.com", "linktr.ee", "angel.co", "wellfound.com", "crunchbase.com",
+    "medium.com", "google.com", "sites.google.com", "wixsite.com", "notion.site", "linktr.ee", "angel.co",
+    "wellfound.com", "crunchbase.com",
 }
+
+
+def is_shared_site(domain: str | None) -> bool:
+    """linkedin.com, ar.linkedin.com, acme.medium.com..."""
+    return bool(domain) and any(domain == g or domain.endswith("." + g) for g in GENERIC_SITES)
+
+
+def company_domain(url: str | None) -> str | None:
+    """The website's domain when it can identify a company, else None (no URL, or a shared platform)."""
+    domain = website_domain(url)
+    return None if is_shared_site(domain) else domain
 
 
 def looks_like_category(name: str, sector: str | None = None) -> bool:
@@ -75,8 +88,8 @@ def looks_like_category(name: str, sector: str | None = None) -> bool:
 
 def name_from_website(url: str | None) -> str | None:
     """A usable name from a company's own domain: agribodytech.com -> "Agribodytech"."""
-    domain = website_domain(url)
-    if not domain or domain in GENERIC_SITES or any(domain.endswith("." + g) for g in GENERIC_SITES):
+    domain = company_domain(url)
+    if not domain:
         return None
     label = domain.split(".")[0]
     return label.capitalize() if len(label) >= 3 else None
@@ -110,10 +123,22 @@ def site_label(site: str) -> str:
     return site.lower().removeprefix("www.").split(".")[0]
 
 
+# What a regional site adds to its main site's name (theyieldlab + latam)
+REGION_SUFFIXES = {
+    "latam", "latinamerica", "la", "asia", "apac", "eu", "europe", "emea", "us", "usa", "na", "africa",
+    "mena", "ar", "argentina", "br", "brasil", "brazil", "mx", "mexico", "cl", "chile", "co", "colombia",
+    "uk", "global", "intl", "international",
+}
+
+
 def sister_of(site: str, others: list[str]) -> str | None:
     """The main site when SITE is a regional sister of it (theyieldlablatam.com -> theyieldlab.com):
-    its brand label starts with the other's, which has 6+ characters."""
+    its brand label is another site's label plus a region, with an optional '-' between.
+    Any other shared start is a different fund (argentinatech.com is not argentina.gob.ar)."""
     label = site_label(site)
-    parents = [o for o in others if o != site and len(site_label(o)) >= 6
-               and label != site_label(o) and label.startswith(site_label(o))]
-    return min(parents, key=lambda o: len(site_label(o))) if parents else None
+    for other in others:
+        parent = site_label(other)
+        if other != site and len(parent) >= 4 and label.startswith(parent):
+            if label[len(parent):].lstrip("-") in REGION_SUFFIXES:
+                return other
+    return None

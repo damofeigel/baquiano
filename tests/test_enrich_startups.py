@@ -214,3 +214,42 @@ def test_unreachable_site_keeps_the_error_message():
             raise RuntimeError("net::ERR_NAME_NOT_RESOLVED at https://calfix.bio/\nCall log: ...")
     pages, status = es.collect_pages(Failing(), "https://calfix.bio/")
     assert pages == [] and status == "unreachable: RuntimeError: net::ERR_NAME_NOT_RESOLVED at https://calfix.bio/"
+
+
+
+def _previous(tmp_path, startups):
+    path = tmp_path / "startups_enriched_old.json"
+    path.write_text(json.dumps({"startups": startups}))
+    return path
+
+
+def test_a_shared_platform_link_is_not_an_identity(tmp_path):
+    old = _previous(tmp_path, [{"name": "Acme", "website": "https://www.linkedin.com/company/acme",
+                                "enrichment": {"tech_area": "fintech"}}])
+    startups = [{"name": "Brava", "website": "https://www.linkedin.com/company/brava"},
+                {"name": "Cora", "website": "https://linkedin.com/company/cora"}]
+    done: dict = {}
+    assert es.reuse_previous(startups, [old], done) == 0 and done == {}
+
+
+@pytest.mark.parametrize("old_site, new_site, reused", [
+    ("https://nova.com", "https://nova.com.ar", False),         # same name, two different companies
+    ("https://nova.com", None, True),                           # one side has no website: the name decides
+    (None, "https://nova.com.ar", True),
+    ("https://www.linkedin.com/company/nova", "https://nova.com.ar", True),   # a platform link isn't a domain
+    ("https://nova.com", "https://www.nova.com/en", True),      # same domain
+])
+def test_same_name_is_reused_only_when_the_websites_agree(tmp_path, old_site, new_site, reused):
+    old = _previous(tmp_path, [{"name": "Nova", "website": old_site, "enrichment": {"country": "United States"}}])
+    done: dict = {}
+    assert es.reuse_previous([{"name": "Nova", "website": new_site}], [old], done) == int(reused)
+
+
+def test_each_reused_startup_gets_its_own_copy(tmp_path):
+    old = _previous(tmp_path, [{"name": "Kilimo", "aliases": ["KILIMO"], "website": "https://kilimo.com",
+                                "enrichment": {"country": None, "argentina_signals": [".ar domain"]}}])
+    startups = [{"name": "Kilimo", "website": "https://kilimo.com"}, {"name": "KILIMO"}]
+    done: dict = {}
+    assert es.reuse_previous(startups, [old], done) == 2
+    done["Kilimo"]["enrichment"]["country"] = "Argentina"
+    assert done["KILIMO"]["enrichment"]["country"] is None

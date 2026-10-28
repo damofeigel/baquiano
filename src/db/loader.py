@@ -24,12 +24,7 @@ from typing import Any
 
 import psycopg
 
-# Shared platforms: a link to one of these doesn't identify an actor
-GENERIC_DOMAINS = {
-    "linkedin.com", "facebook.com", "instagram.com", "x.com", "twitter.com", "youtube.com",
-    "github.com", "medium.com", "google.com", "sites.google.com", "wixsite.com", "notion.site",
-    "linktr.ee", "angel.co", "wellfound.com", "crunchbase.com",
-}
+from src.core.matching import is_shared_site
 
 
 @dataclass
@@ -104,7 +99,7 @@ def _add_alias(conn: psycopg.Connection, actor_id: int, alias: str, source_id: i
 
 
 def _add_domain(conn: psycopg.Connection, actor_id: int, domain: str | None, source_id: int | None) -> None:
-    if domain and domain not in GENERIC_DOMAINS:
+    if domain and not is_shared_site(domain):
         conn.execute(
             """INSERT INTO actor_identifiers (actor_id, scheme, value, source_id) VALUES (%s, 'domain', %s, %s)
                ON CONFLICT (scheme, value) DO NOTHING""",
@@ -136,7 +131,7 @@ def resolve_mention(conn: psycopg.Connection, mention_id: int) -> str:
         return "done"
 
     # 1. A shared identifier is proof (merged actors resolve to what they were merged into)
-    if domain and domain not in GENERIC_DOMAINS:
+    if domain and not is_shared_site(domain):
         row = conn.execute(
             """SELECT coalesce(a.merged_into_id, a.id) FROM actor_identifiers i
                JOIN actors a ON a.id = i.actor_id
