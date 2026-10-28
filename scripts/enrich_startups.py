@@ -26,17 +26,19 @@ import argparse
 import json
 import re
 import sys
-import unicodedata
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core import config  # noqa: E402
+from src.core.structured_llm import (  # noqa: E402,F401  (re-exported for tests)
+    Classifier, check_llm, make_llm_classifier, parse_json, quote_found,
+)
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
 TAXONOMY_FILE = Path(__file__).resolve().parent / "taxonomy.json"
@@ -61,9 +63,6 @@ ARGENTINA_SIGNALS = {
         re.IGNORECASE,
     ),
 }
-
-Classifier = Callable[[list[dict[str, str]], dict[str, Any]], dict[str, Any]]
-
 
 #  Reading the startup's site 
 
@@ -167,55 +166,7 @@ Its website:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def check_llm(client: Any, model: str) -> str | None:
-    """None if the server answers and serves the model, else a message saying what's wrong."""
-    try:
-        served = [m.id for m in client.models.list()]
-    except Exception as exc:
-        return (f"Can't reach the LLM server at {config.VLLM_BASE_URL} ({type(exc).__name__}: {exc}). "
-                f"Is vLLM running? Check with: curl {config.VLLM_BASE_URL.rstrip('/')}/models")
-    if served and model not in served:
-        return f"The server doesn't serve VLLM_MODEL={model!r}. It serves: {', '.join(served)}"
-    return None
-
-
-def make_llm_classifier(client: Any, model: str) -> Classifier:
-    """Structured output via the server's JSON-schema mode, with a plain-JSON fallback."""
-    def classify(messages: list[dict[str, str]], schema: dict[str, Any]) -> dict[str, Any]:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0,
-            max_tokens=config.LLM_MAX_TOKENS,
-            response_format={"type": "json_schema",
-                             "json_schema": {"name": "startup_enrichment", "schema": schema, "strict": True}},
-        )
-        return parse_json(response.choices[0].message.content or "")
-    return classify
-
-
-def parse_json(text: str) -> dict[str, Any]:
-    """The JSON object in a reply, tolerating code fences or text around it."""
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end < start:
-        raise ValueError(f"no JSON object in model reply: {text[:200]!r}")
-    return json.loads(text[start:end + 1])
-
-
 #  Checking the answer 
-
-def _norm(text: str) -> str:
-    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
-    return re.sub(r"\s+", " ", text.lower()).strip()
-
-
-def quote_found(quote: str | None, texts: list[str]) -> bool:
-    """True if the quoted evidence really appears in the texts (case, accents, spacing ignored)."""
-    if not quote:
-        return False
-    q = _norm(quote).strip(" .\"'“”…")
-    return len(q) >= 4 and q in _norm("\n".join(texts))
-
 
 def verify(result: dict[str, Any], texts: list[str], taxonomy: dict[str, Any]) -> dict[str, Any]:
     checks = []

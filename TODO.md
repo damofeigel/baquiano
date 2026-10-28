@@ -2,7 +2,6 @@
 
 ### Todo
 
-- [ ] Entity resolution step 4: an LLM judge for the pairs left in review, with quoted evidence
 - [ ] Label 100 to 200 review pairs and fit the resolution thresholds on them
 - [ ] Undo command for merged actors
 - [ ] Relationships from portfolios and Lens (co-patenting, spin-offs)
@@ -16,6 +15,7 @@
 
 ### Done
 
+- [x] Entity resolution step 4: LLM judge for review pairs, applied only with verified quotes (`resolve_entities.py judge`)
 - [x] Manage startups sectors: `sector` keeps only the fund's own label (dropped if no page shows it); `enrichment.tech_area` from `taxonomy.json` is the classification
 - [x] Entity resolution v1: candidates, scoring, merges, review CSV export/apply (`scripts/resolve_entities.py`)
 - [x] Database loader: portfolio outputs to mentions, actors and investments (`scripts/load_db.py`)

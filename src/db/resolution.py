@@ -80,6 +80,7 @@ class Profile:
     sources: set[int] = field(default_factory=set)
     funds: set[str] = field(default_factory=set)
     mentions: int = 0
+    aliases: list[str] = field(default_factory=list)   # names as written, for people and the LLM judge
 
 
 def plain(text: str) -> str:
@@ -251,6 +252,8 @@ def actor_profile(conn: psycopg.Connection, actor_id: int) -> Profile:
         "SELECT DISTINCT alias_norm FROM actor_aliases WHERE actor_id = %s AND alias_norm <> ''", (actor_id,)
     ).fetchall() if r[0] != name_norm]
     p = Profile("actor", actor_id, name, [n for n in names if n])
+    p.aliases = [r[0] for r in conn.execute(
+        "SELECT alias FROM actor_aliases WHERE actor_id = %s ORDER BY id", (actor_id,)).fetchall() if r[0] != name]
     p.domains = {r[0] for r in conn.execute(
         "SELECT value FROM actor_identifiers WHERE actor_id = %s AND scheme = 'domain'", (actor_id,)).fetchall()}
     if description:
@@ -326,25 +329,31 @@ def current_decision(conn: psycopg.Connection, *, mention_id: int | None = None,
         (actor_id, candidate_id)).fetchone()
 
 
+# Who may replace whose decision: a person over the LLM judge, the judge over scores and rules
+METHOD_RANK = {"rule": 0, "score": 0, "llm": 1, "agent": 1, "human": 2}
+
+
 def record_decision(conn: psycopg.Connection, *, mention_id: int | None = None, actor_id: int | None = None,
                     candidate_id: int, decision: str, method: str, score: float | None,
-                    features: dict[str, Any], reason: str, decided_by: str | None = None) -> int | None:
+                    features: dict[str, Any], reason: str, decided_by: str | None = None,
+                    evidence: list[dict[str, Any]] | None = None) -> int | None:
     """Make this the current decision for the pair. Returns its id, or None when a
-    human already decided the pair (never overridden by a rule or a score)."""
+    higher-ranked method already decided the pair (METHOD_RANK: a score never
+    overrides the LLM judge, nothing overrides a person)."""
     current = current_decision(conn, mention_id=mention_id, actor_id=actor_id, candidate_id=candidate_id)
     if current:
         current_id, current_decision_, current_method, current_score = current
-        if current_method == "human" and method != "human":
+        if METHOD_RANK[current_method] > METHOD_RANK[method]:
             return None
         if (current_decision_, current_method) == (decision, method) and current_score == score:
             return current_id
         conn.execute("UPDATE match_decisions SET is_current = FALSE WHERE id = %s", (current_id,))
     return conn.execute(
         """INSERT INTO match_decisions (mention_id, actor_id, candidate_actor_id, decision, method, score,
-                                        features, reason, decided_by)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                                        features, reason, evidence, decided_by)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
         (mention_id, actor_id, candidate_id, decision, method, score, json.dumps(features, ensure_ascii=False),
-         reason, decided_by)).fetchone()[0]
+         reason, json.dumps(evidence or [], ensure_ascii=False), decided_by)).fetchone()[0]
 
 
 def _retire_open_decisions(conn: psycopg.Connection, mention_id: int) -> None:
@@ -478,7 +487,7 @@ def resolve_actor_pairs(conn: psycopg.Connection, stats: ResolveStats) -> None:
             continue
         a, b = min(a, b), max(a, b)
         current = current_decision(conn, actor_id=a, candidate_id=b)
-        if current and current[2] == "human":
+        if current and METHOD_RANK[current[2]] > METHOD_RANK["score"]:
             continue
         decision, score, features, reason = score_pair(actor_profile(conn, a), actor_profile(conn, b))
         stats.pairs_scored += 1
@@ -499,7 +508,7 @@ def resolve_mention_candidates(conn: psycopg.Connection, mention_id: int, stats:
     outcomes: dict[int, tuple[str, float | None]] = {}
     for candidate in mention_candidates(conn, mention_id):
         current = current_decision(conn, mention_id=mention_id, candidate_id=candidate)
-        if current and current[2] == "human":
+        if current and METHOD_RANK[current[2]] > METHOD_RANK["score"]:
             outcomes[candidate] = (current[1], current[3])
             continue
         decision, score, features, reason = score_pair(m, actor_profile(conn, candidate))
@@ -577,6 +586,27 @@ def export_review(conn: psycopg.Connection, path: Path) -> int:
     return len(rows)
 
 
+def finish_rejected_mention(conn: psycopg.Connection, mention_id: int) -> bool:
+    """When every candidate of a mention was rejected, it becomes a new actor. Returns True if it did.
+
+    The new actor would meet the same candidates as actor pairs, so a person's
+    or the judge's no_match is carried over to them (a score is just recomputed)."""
+    still_open = conn.execute(
+        """SELECT count(*) FROM match_decisions WHERE is_current AND mention_id = %s
+           AND decision <> 'no_match'""", (mention_id,)).fetchone()[0]
+    if still_open:
+        return False
+    new_id = create_actor_for_mention(conn, mention_id)
+    for rejected, method, reason, decided_by in conn.execute(
+            """SELECT candidate_actor_id, method, reason, decided_by FROM match_decisions
+               WHERE is_current AND mention_id = %s AND method IN ('human', 'llm')""", (mention_id,)).fetchall():
+        a, b = sorted((new_id, canonical(conn, rejected)))
+        if a != b:
+            record_decision(conn, actor_id=a, candidate_id=b, decision="no_match", method=method, score=None,
+                            features={"from_mention": mention_id}, reason=reason, decided_by=decided_by)
+    return True
+
+
 def apply_decision(conn: psycopg.Connection, decision_id: int, decision: str, decided_by: str,
                    notes: str = "") -> str:
     """Record a person's decision on a review pair and carry it out. Returns what happened."""
@@ -600,22 +630,8 @@ def apply_decision(conn: psycopg.Connection, decision_id: int, decision: str, de
             link_mention(conn, mention_id, candidate, "human", score)
             _retire_open_decisions(conn, mention_id)
             return "linked"
-        if decision == "no_match":
-            still_open = conn.execute(
-                """SELECT count(*) FROM match_decisions WHERE is_current AND mention_id = %s
-                   AND decision <> 'no_match'""", (mention_id,)).fetchone()[0]
-            if not still_open:
-                new_id = create_actor_for_mention(conn, mention_id)
-                # The new actor would meet the same candidates as an actor pair: carry the answer over
-                for (rejected,) in conn.execute(
-                        """SELECT DISTINCT candidate_actor_id FROM match_decisions
-                           WHERE is_current AND mention_id = %s AND method = 'human'""", (mention_id,)).fetchall():
-                    a, b = sorted((new_id, canonical(conn, rejected)))
-                    record_decision(conn, actor_id=a, candidate_id=b, decision="no_match", method="human",
-                                    score=None, features={"from_mention": mention_id}, reason=reason,
-                                    decided_by=decided_by)
-                return "new actor"
-            return "recorded"
+        if decision == "no_match" and finish_rejected_mention(conn, mention_id):
+            return "new actor"
         return "recorded"
 
     if decision == "match":

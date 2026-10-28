@@ -331,6 +331,7 @@ Every record becomes a **mention**, stored as found. A mention is linked to an a
 
 ```bash
 python scripts/resolve_entities.py                    # score candidate pairs; merge/link the sure ones (--dry-run)
+python scripts/resolve_entities.py judge --limit 20   # ask the LLM about pairs in review (--dry-run)
 python scripts/resolve_entities.py export             # pairs to review -> output/review.csv
 python scripts/resolve_entities.py apply output/review.csv
 ```
@@ -343,6 +344,13 @@ python scripts/resolve_entities.py apply output/review.csv
   - **unsure:** goes to the `match_review_queue` view.
 - **The same name alone never merges.** A match needs a strong name, some corroboration (overlapping descriptions or the same country) and nothing against it. Newtopia's "Kigui" (retail AI) and The Yield Lab's "Kigüi" (food logistics, Mexico) are two different companies.
 - **Review:** `export` writes each pair with both sides' websites, countries, funds and descriptions. Write `match` or `no_match` in `your_decision` (and optionally `notes`), then `apply`. Your decisions are recorded as `human` and never overridden by a later run.
+- **LLM judge** (`judge`, in `src/db/judge.py`): the model sees both records (names, websites, countries, funds, descriptions) and answers match, no_match or unsure, with a confidence and quotes from the records. Its answer is checked before anything happens:
+  - a **match** needs high confidence, a quote from each record's description or website that really is in that record, and no website, country or same-page conflict;
+  - a **no_match** needs medium or high confidence and one such quote;
+  - quoting names, countries, types or funds doesn't count, since different companies share them, and neither does the prompt's own text ("none known");
+  - anything else stays in review, now with the model's reasoning in the CSV.
+
+  Each pair is saved as soon as it's judged, so a rerun continues. Later score runs never override the judge, and your decisions override it. It uses `VLLM_BASE_URL` and `VLLM_MODEL` from `.env`.
 - **Thresholds and word lists** are at the top of `src/db/resolution.py`.
 
 ## Configuration
