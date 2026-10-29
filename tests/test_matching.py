@@ -6,7 +6,7 @@ import pytest
 
 from src.core.matching import (
     company_domain, is_shared_site, looks_like_category, name_from_website, normalize_country,
-    registrable_domain, sister_of,
+    registrable_domain, sister_of, surely_category,
 )
 
 
@@ -25,6 +25,17 @@ def test_tags_and_badges_are_not_names(name, sector):
 ])
 def test_company_names_are_kept(name, sector):
     assert not looks_like_category(name, sector)
+
+
+@pytest.mark.parametrize("name, sector, sure", [
+    ("AI & SaaS", None, True), ("Exit FinTech", None, True), ("Crypto Startups", None, True),
+    ("Energy", "Energy", True),                             # its own sector tag
+    ("Mobility", None, False), ("Crypto Energy", None, False), ("Logistics", "Mobility", False),
+    ("All", None, False), ("Other", None, False),
+    ("Kilimo", None, False),                                 # not a category at all
+])
+def test_only_tag_words_make_a_category_certain(name, sector, sure):
+    assert surely_category(name, sector) is sure
 
 
 @pytest.mark.parametrize("url, name", [

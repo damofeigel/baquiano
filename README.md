@@ -283,7 +283,7 @@ python scripts/merge_portfolios.py output/a.json output/b.json
 - **Every description is kept** in `descriptions`, one per fund, and the longest becomes `description`.
 - **Fields that disagree between funds aren't overwritten.** They're listed under `conflicts`.
 - **A regional sister site is the same fund.** `theyieldlablatam.com` counts as The Yield Lab, whose own run already follows its regional sites; otherwise every Latam startup would look like it's in two funds.
-- **Tags and badges read as names are cleaned up.** Some portfolio pages show logos with a tag, so a crawl can record "AI & SaaS" or "Exited" as a name. Such a record is renamed from its website ("Exited" with agribodytech.com becomes "Agribodytech") or dropped when it has none. Each change is listed under `cleaning` in the output and printed.
+- **Tags and badges read as names are cleaned up.** Some portfolio pages show logos with a tag, so a crawl can record "AI & SaaS" or "Exited" as a name. Such a record is renamed from its website ("Exited" with agribodytech.com becomes "Agribodytech") or dropped when it has none. A name made only of ordinary words ("Mobility", "Crypto Energy") may be a real company, so it is kept when there is no website to check it. Each change is listed under `cleaning` in the output and printed.
 - **Countries get one spelling:** "USA", "U.S.A." and "EE.UU." all become "United States".
 - **Output:** `output/startups_merged_<time>.json` with a `summary` (startups, in several funds, Argentine, country unknown, with conflicts, cleaned), plus a `.csv` to open in a spreadsheet.
 

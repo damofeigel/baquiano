@@ -108,6 +108,30 @@ def test_category_tags_read_as_names_are_renamed_or_dropped(tmp_path):
     assert "17 Sigma: dropped 'AI & SaaS': a category, not a company name, and no website" in notes
 
 
+def test_names_of_ordinary_words_are_never_dropped(tmp_path):
+    fund = _fund(tmp_path / "17sigma.vc_20261022-134710.json", "17 Sigma", [
+        {"name": "Mobility", "description": "Electric scooters for Rosario"},          # no website
+        {"name": "Crypto Energy", "website": "https://www.linkedin.com/company/ce"},   # only a platform
+        {"name": "Logistics", "website": "https://logistics.io"},                     # the site confirms it
+        {"name": "Marketplace", "website": "https://www.mercadoagro.com.ar"},         # renamed from the site
+        {"name": "FinTech", "description": "FinTech"},                                # a tag word: dropped
+    ])
+    notes: list[str] = []
+    merged = {s["name"]: s for s in mp.merge([fund], notes)}
+
+    assert set(merged) == {"Mobility", "Crypto Energy", "Logistics", "Mercadoagro"}
+    assert merged["Mobility"]["description"] == "Electric scooters for Rosario"
+    assert "renamed_from" not in merged["Logistics"]
+    assert merged["Mercadoagro"]["renamed_from"] == ["Marketplace"]
+    assert notes == [
+        "17 Sigma: kept 'Mobility': may be a sector tag or a real name, and no website to tell",
+        "17 Sigma: kept 'Crypto Energy': may be a sector tag or a real name, and its only link is the "
+        "fund's own site or a shared platform to tell",
+        "17 Sigma: renamed 'Marketplace' to 'Mercadoagro' (from https://www.mercadoagro.com.ar)",
+        "17 Sigma: dropped 'FinTech': a category, not a company name, and no website",
+    ]
+
+
 def test_a_regional_sister_site_is_the_same_fund(tmp_path):
     main = _fund(tmp_path / "theyieldlab.com_20261014-234417.json", "The Yield Lab", [
         {"name": "Kigüi", "website": None}, {"name": "Beeflow", "website": "https://beeflow.com"}])

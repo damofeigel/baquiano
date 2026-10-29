@@ -51,12 +51,16 @@ def website_domain(url: str | None) -> str | None:
 
 # Sector tags and card badges a portfolio page shows next to (or instead of) a name.
 # 17 Sigma's cards are logos with a tag, so a crawl read "AI & SaaS" as the name.
-CATEGORY_WORDS = {
+# TAG_WORDS are never a company's whole name; ORDINARY_WORDS can be ("Mobility",
+# "Crypto Energy"), so a name made only of them is never dropped on their account.
+TAG_WORDS = {
     "ai", "saas", "tech", "fintech", "foodtech", "agtech", "agrotech", "agrifood", "biotech", "healthtech",
     "medtech", "edtech", "hrtech", "proptech", "insurtech", "legaltech", "cleantech", "climatetech", "deeptech",
-    "web3", "crypto", "blockchain", "energy", "mobility", "logistics", "marketplace", "b2b", "b2c", "iot",
-    "exit", "exited", "acquired", "ipo", "portfolio", "startup", "startups", "other", "others", "all", "and",
+    "web3", "blockchain", "b2b", "b2c", "iot", "exit", "exited", "acquired", "ipo", "portfolio", "startup",
+    "startups",
 }
+ORDINARY_WORDS = {"crypto", "energy", "mobility", "logistics", "marketplace", "other", "others", "all", "and"}
+CATEGORY_WORDS = TAG_WORDS | ORDINARY_WORDS
 # Shared platforms: a link to one of these doesn't identify a company
 GENERIC_SITES = {
     "linkedin.com", "facebook.com", "instagram.com", "x.com", "twitter.com", "youtube.com", "github.com",
@@ -77,7 +81,7 @@ def company_domain(url: str | None) -> str | None:
 
 
 def looks_like_category(name: str, sector: str | None = None) -> bool:
-    """True for a tag or badge recorded as a name: "AI & SaaS", "Exit FinTech", "Exited",
+    """True for a name that may be a tag or badge: "AI & SaaS", "Exited", "Mobility",
     or a name identical to the record's own sector."""
     words = re.findall(r"[a-z0-9]+", name.lower())
     if not words:
@@ -85,6 +89,17 @@ def looks_like_category(name: str, sector: str | None = None) -> bool:
     if sector and name.strip().casefold() == sector.strip().casefold():
         return True
     return all(word in CATEGORY_WORDS for word in words)
+
+
+def surely_category(name: str, sector: str | None = None) -> bool:
+    """A category beyond doubt: identical to its own sector, or category words with at least
+    one tag word ("Exit FinTech", "AI & SaaS"). "Mobility" or "Crypto Energy" alone may be
+    a company's real name."""
+    if not looks_like_category(name, sector):
+        return False
+    if sector and name.strip().casefold() == sector.strip().casefold():
+        return True
+    return any(word in TAG_WORDS for word in re.findall(r"[a-z0-9]+", name.lower()))
 
 
 # Second levels under a country code that are part of the suffix: puna.com.ar, acme.co.uk
