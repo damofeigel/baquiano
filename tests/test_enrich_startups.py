@@ -261,3 +261,25 @@ def test_selection_reads_any_spelling_of_argentina():
     startups = [{"name": "A", "country": "ARGENTINA"}, {"name": "B", "country": "República Argentina"},
                 {"name": "C", "country": None}, {"name": "D", "country": "brasil"}]
     assert [s["name"] for s in es.select(startups, False, [])] == ["A", "B", "C"]
+
+
+def test_old_results_get_hints_once_when_loaded(tmp_path, monkeypatch):
+    merged = tmp_path / "startups_merged_x.json"
+    merged.write_text(json.dumps({"startups": [
+        {"name": "Acme", "country": "Argentina"}, {"name": "Nova", "country": "Argentina"}, {"name": "Todo"}]}))
+    out = tmp_path / "startups_enriched_x.json"           # a run to resume, from before hints existed
+    out.write_text(json.dumps({"startups": [
+        {"name": "Acme", "enrichment": {"country": "USA", "argentina_signals": []}}]}))
+    old = _previous(tmp_path, [{"name": "Nova", "enrichment": {"country": None, "argentina_signals": ["phone +54"]}}])
+    calls = []
+    real = es.add_hints
+    monkeypatch.setattr(es, "add_hints", lambda e: calls.append(1) or real(e))
+    monkeypatch.setattr(sys, "argv", ["enrich_startups.py", str(merged), "--out", str(out),
+                                      "--previous", str(old), "--limit", "0"])
+    es.main()
+
+    saved = {s["name"]: s.get("enrichment") for s in json.loads(out.read_text())["startups"]}
+    assert (saved["Acme"]["country"], saved["Acme"]["country_likely"]) == ("United States", "United States")
+    assert (saved["Nova"]["country"], saved["Nova"]["country_likely"]) == (None, "Argentina")
+    assert saved["Todo"] is None
+    assert len(calls) == 2                                 # once per loaded result, not on every save

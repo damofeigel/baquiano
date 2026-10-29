@@ -295,6 +295,8 @@ def main() -> None:
     if out.exists():
         done = {s["name"]: s for s in json.loads(out.read_text(encoding="utf-8"))["startups"] if s.get("enrichment")}
     reused = reuse_previous(merged["startups"], args.previous, done)
+    for entry in done.values():
+        add_hints(entry["enrichment"])
     todo = [s for s in select(merged["startups"], args.all, args.names) if s["name"] not in done]
     if args.limit is not None:
         todo = todo[: args.limit]
@@ -303,8 +305,6 @@ def main() -> None:
     result = {"enriched_at": None, "source": str(merged_path), "taxonomy": str(args.taxonomy), "startups": []}
 
     def save() -> None:
-        for entry in done.values():
-            add_hints(entry["enrichment"])     # also brings results from older runs up to date
         startups = [done.get(s["name"], s) for s in merged["startups"]]
         result["enriched_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         result["startups"] = startups
