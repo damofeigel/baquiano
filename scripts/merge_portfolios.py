@@ -69,13 +69,15 @@ def latest_per_fund(files: list[Path]) -> list[Path]:
     return sorted(path for _, path in newest.values())
 
 
-def fund_names(inputs: list[Path]) -> dict[Path, str]:
-    """One display name per fund site, from its newest file.
+def fund_identities(inputs: list[Path]) -> dict[Path, tuple[str, str]]:
+    """(fund site, display name) per file, the name from the site's newest file.
 
     Runs of the same fund can name it differently ("Grid Exponential" from the
     agent, "GRIDX" from the pre-pass); without this, --all lists it twice. A
-    regional sister site takes its main site's name ("The Yield Lab Latam" ->
-    "The Yield Lab"), since the main site's run already follows its sisters.
+    regional sister site counts as its main site, name and all
+    (theyieldlablatam.com -> theyieldlab.com, "The Yield Lab"), since the main
+    site's run already follows its sisters. The main site is only known when
+    its own output is among INPUTS.
     """
     newest: dict[str, tuple[str, str]] = {}
     for path in inputs:
@@ -85,13 +87,24 @@ def fund_names(inputs: list[Path]) -> dict[Path, str]:
             newest[site] = (stamp, name)
     sites = sorted({fund_site(path)[0] for path in inputs})
 
-    def name_of(site: str) -> str:
+    def identity(site: str) -> tuple[str, str]:
         parent = sister_of(site, sites)
         if parent and parent in newest:
-            return newest[parent][1]
-        return newest.get(site, ("", "Unknown"))[1]
+            return parent, newest[parent][1]
+        return site, newest.get(site, ("", "Unknown"))[1]
 
-    return {path: name_of(fund_site(path)[0]) for path in inputs}
+    return {path: identity(fund_site(path)[0]) for path in inputs}
+
+
+def fund_names(inputs: list[Path]) -> dict[Path, str]:
+    """One display name per fund (see fund_identities)."""
+    return {path: name for path, (_, name) in fund_identities(inputs).items()}
+
+
+def fund_domains(path: Path, data: dict) -> set[str]:
+    """The fund's own registrable domains: its site (from the file name) and its portfolio page."""
+    return {d for d in (registrable_domain(fund_site(path)[0]),
+                        registrable_domain(website_domain(data.get("source_url")))) if d}
 
 
 def clean_startup(startup: dict, fund_domains: set[str] | None = None) -> tuple[dict | None, str | None]:
@@ -122,6 +135,20 @@ def clean_startup(startup: dict, fund_domains: set[str] | None = None) -> tuple[
         description = None                       # the tag repeated as a description
     return ({**startup, "name": better, "description": description, "renamed_from": name},
             f"renamed '{name}' to '{better}' (from {startup.get('website')})")
+
+
+def clean_portfolio(path: Path, data: dict) -> tuple[list[dict], list[str]]:
+    """(the file's startups after clean_startup, notes on what changed). Records without a name are skipped."""
+    startups, notes, domains = [], [], fund_domains(path, data)
+    for raw in data.get("startups", []):
+        if not raw.get("name"):
+            continue
+        startup, note = clean_startup(raw, domains)
+        if note:
+            notes.append(note)
+        if startup is not None:
+            startups.append(startup)
+    return startups, notes
 
 
 def find_inputs(paths: list[Path], include_all: bool) -> list[Path]:
@@ -160,16 +187,9 @@ def merge(inputs: list[Path], notes: list[str] | None = None) -> list[dict]:
     for path in inputs:
         data = json.loads(path.read_text(encoding="utf-8"))
         fund = names[path]
-        fund_domains = {d for d in (registrable_domain(fund_site(path)[0]),
-                                    registrable_domain(website_domain(data.get("source_url")))) if d}
-        for raw in data["startups"]:
-            if not raw.get("name"):
-                continue
-            startup, note = clean_startup(raw, fund_domains)
-            if note:
-                notes.append(f"{fund}: {note}")
-            if startup is None:
-                continue
+        startups, cleaned = clean_portfolio(path, data)
+        notes += [f"{fund}: {note}" for note in cleaned]
+        for startup in startups:
             entry = find_match(merged, startup)
             if entry is None:
                 entry = {
