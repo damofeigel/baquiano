@@ -283,3 +283,17 @@ def test_old_results_get_hints_once_when_loaded(tmp_path, monkeypatch):
     assert (saved["Nova"]["country"], saved["Nova"]["country_likely"]) == (None, "Argentina")
     assert saved["Todo"] is None
     assert len(calls) == 2                                 # once per loaded result, not on every save
+
+
+def test_startups_matching_one_old_record_get_their_own_copy(tmp_path):
+    old = _previous(tmp_path, [{"name": "Kilimo", "aliases": ["KILIMO"], "website": "https://kilimo.com",
+                                "enrichment": {"country": None, "argentina_signals": [".ar domain"],
+                                               "checks": ["year not on the pages"]}}])
+    startups = [{"name": "Kilimo", "website": "https://kilimo.com"}, {"name": "KILIMO"}]   # by domain, by alias
+    done: dict = {}
+    assert es.reuse_previous(startups, [old], done) == 2
+
+    first, second = done["Kilimo"]["enrichment"], done["KILIMO"]["enrichment"]
+    first["country"] = "Argentina"
+    first["checks"].append("changed")
+    assert second["country"] is None and second["checks"] == ["year not on the pages"]

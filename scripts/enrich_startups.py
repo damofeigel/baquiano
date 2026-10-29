@@ -23,6 +23,7 @@ Writes output/startups_enriched_<time>.json (named after the merged file).
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import sys
@@ -261,7 +262,8 @@ def reuse_previous(startups: list[dict], files: list[Path], done: dict[str, dict
                     found = candidate
                     break
         if found:
-            done[startup["name"]] = {**startup, "enrichment": dict(found["enrichment"])}   # a copy per startup
+            # A full copy per startup: two startups can match one old record
+            done[startup["name"]] = {**startup, "enrichment": copy.deepcopy(found["enrichment"])}
             reused += 1
     return reused
 
