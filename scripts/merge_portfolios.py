@@ -36,8 +36,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core.matching import (  # noqa: E402
-    dedupe_key, looks_like_category, name_from_website, normalize_country, same_company_name, sister_of,
-    website_domain,
+    dedupe_key, looks_like_category, name_from_website, normalize_country, registrable_domain, same_company_name,
+    sister_of, website_domain,
 )
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -94,19 +94,22 @@ def fund_names(inputs: list[Path]) -> dict[Path, str]:
     return {path: name_of(fund_site(path)[0]) for path in inputs}
 
 
-def clean_startup(startup: dict) -> tuple[dict | None, str | None]:
+def clean_startup(startup: dict, fund_domains: set[str] | None = None) -> tuple[dict | None, str | None]:
     """(the record to merge or None to drop it, a note on what changed).
 
     A tag or badge read as the name ("AI & SaaS", "Exited") is replaced by a
     name from the startup's website; without one there is nothing to identify.
+    A link to the fund's own site (FUND_DOMAINS) doesn't count as the startup's.
     """
     startup = {**startup, "country": normalize_country(startup.get("country"))}
     name = startup["name"]
     if not looks_like_category(name, startup.get("sector")):
         return startup, None
-    better = name_from_website(startup.get("website"))
+    better = name_from_website(startup.get("website"), fund_domains)
     if not better:
-        return None, f"dropped '{name}': a category, not a company name, and no website"
+        why = ("its only link is the fund's own site or a shared platform" if startup.get("website")
+               else "no website")
+        return None, f"dropped '{name}': a category, not a company name, and {why}"
     description = startup.get("description")
     if description and description.strip().casefold() == name.strip().casefold():
         description = None                       # the tag repeated as a description
@@ -150,10 +153,12 @@ def merge(inputs: list[Path], notes: list[str] | None = None) -> list[dict]:
     for path in inputs:
         data = json.loads(path.read_text(encoding="utf-8"))
         fund = names[path]
+        fund_domains = {d for d in (registrable_domain(fund_site(path)[0]),
+                                    registrable_domain(website_domain(data.get("source_url")))) if d}
         for raw in data["startups"]:
             if not raw.get("name"):
                 continue
-            startup, note = clean_startup(raw)
+            startup, note = clean_startup(raw, fund_domains)
             if note:
                 notes.append(f"{fund}: {note}")
             if startup is None:

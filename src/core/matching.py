@@ -86,10 +86,26 @@ def looks_like_category(name: str, sector: str | None = None) -> bool:
     return all(word in CATEGORY_WORDS for word in words)
 
 
-def name_from_website(url: str | None) -> str | None:
-    """A usable name from a company's own domain: agribodytech.com -> "Agribodytech"."""
-    domain = company_domain(url)
+# Second levels under a country code that are part of the suffix: puna.com.ar, acme.co.uk
+_SECOND_LEVELS = {"com", "co", "org", "net", "gob", "gov", "edu", "ac", "mil", "int", "nom", "ai", "io"}
+
+
+def registrable_domain(domain: str | None) -> str | None:
+    """The part of a domain its owner registered: app.foo.com -> foo.com, en.puna.com.ar -> puna.com.ar."""
     if not domain:
+        return None
+    parts = domain.lower().removeprefix("www.").split(".")
+    if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in _SECOND_LEVELS:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
+def name_from_website(url: str | None, not_from: set[str] | None = None) -> str | None:
+    """A usable name from a company's own domain: agribodytech.com -> "Agribodytech",
+    app.foo.com -> "Foo". None for a shared platform or a site in NOT_FROM (registrable
+    domains, e.g. the fund's own site: a tag card linking there names the fund, not a company)."""
+    domain = registrable_domain(company_domain(url))
+    if not domain or domain in (not_from or set()):
         return None
     label = domain.split(".")[0]
     return label.capitalize() if len(label) >= 3 else None

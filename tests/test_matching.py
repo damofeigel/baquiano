@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from src.core.matching import (
-    company_domain, is_shared_site, looks_like_category, name_from_website, normalize_country, sister_of,
+    company_domain, is_shared_site, looks_like_category, name_from_website, normalize_country,
+    registrable_domain, sister_of,
 )
 
 
@@ -32,6 +33,10 @@ def test_company_names_are_kept(name, sector):
     ("https://www.linkedin.com/company/acme", None),        # a platform, not the company's site
     ("https://acme.medium.com", None),
     ("https://ab.io", None),                                # too short to be a name
+    ("https://app.foo.com/login", "Foo"),                   # a subdomain is not the name
+    ("https://en.agribodytech.com", "Agribodytech"),
+    ("https://www.puna.com.ar", "Puna"),                    # two-part suffix
+    ("https://shop.acme.co.uk", "Acme"),
     (None, None), ("", None),
 ])
 def test_name_from_website(url, name):
@@ -83,3 +88,19 @@ def test_company_domain(url, domain):
 def test_is_shared_site():
     assert is_shared_site("linkedin.com") and is_shared_site("es.linkedin.com")
     assert not is_shared_site("notlinkedin.com") and not is_shared_site(None)
+
+
+@pytest.mark.parametrize("domain, registrable", [
+    ("foo.com", "foo.com"), ("app.foo.com", "foo.com"), ("www.foo.com", "foo.com"),
+    ("puna.com.ar", "puna.com.ar"), ("en.puna.com.ar", "puna.com.ar"), ("argentina.gob.ar", "argentina.gob.ar"),
+    ("acme.co.uk", "acme.co.uk"), ("puna.bio", "puna.bio"), ("17sigma.vc", "17sigma.vc"),
+    ("lioraenergia.com.br", "lioraenergia.com.br"), (None, None), ("", None),
+])
+def test_registrable_domain(domain, registrable):
+    assert registrable_domain(domain) == registrable
+
+
+def test_no_name_from_the_funds_own_site():
+    assert name_from_website("https://17sigma.vc/portfolio/ai-saas", {"17sigma.vc"}) is None
+    assert name_from_website("https://blog.17sigma.vc/x", {"17sigma.vc"}) is None
+    assert name_from_website("https://lioraenergia.com.br", {"17sigma.vc"}) == "Lioraenergia"

@@ -155,3 +155,20 @@ def test_a_name_made_from_the_website_stays_when_no_fund_gives_a_real_one(tmp_pa
         {"name": "Energy", "website": "https://www.lioraenergia.com.br/", "sector": "Energy"}])
     [liora] = mp.merge([sigma])
     assert (liora["name"], liora["aliases"]) == ("Lioraenergia", [])
+
+
+
+def test_tags_linking_to_the_funds_own_site_do_not_become_one_fake_startup(tmp_path):
+    sigma = tmp_path / "17sigma.vc_20261022-134710.json"
+    sigma.write_text(json.dumps({"source_url": "https://17sigma.com/portfolio", "fund_name": "17 Sigma", "errors": [],
+        "startups": [
+            {"name": "AI & SaaS", "website": "https://17sigma.vc/portfolio/ai-saas", "description": "AI & SaaS"},
+            {"name": "FinTech", "website": "https://www.17sigma.com/fintech", "description": "FinTech"},
+            {"name": "Energy", "website": "https://app.lioraenergia.com.br/", "sector": "Energy"},
+        ]}))
+    notes: list[str] = []
+    merged = mp.merge([sigma], notes)
+
+    assert [s["name"] for s in merged] == ["Lioraenergia"]       # not "17sigma", not "App"
+    assert sum(note.startswith("17 Sigma: dropped") for note in notes) == 2
+    assert all("the fund's own site" in note for note in notes if "dropped" in note)
