@@ -228,7 +228,7 @@ def select(startups: list[dict], include_all: bool, names: list[str]) -> list[di
                 or any(a.casefold() in wanted for a in s.get("aliases", []))]
     if include_all:
         return startups
-    return [s for s in startups if (s.get("country") or "Argentina") == "Argentina"]
+    return [s for s in startups if (normalize_country(s.get("country")) or "Argentina") == "Argentina"]
 
 
 def reuse_previous(startups: list[dict], files: list[Path], done: dict[str, dict]) -> int:

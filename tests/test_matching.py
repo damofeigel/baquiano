@@ -48,6 +48,12 @@ def test_name_from_website(url, name):
     ("Estados Unidos", "United States"), ("United States", "United States"), ("UK", "United Kingdom"),
     ("Brasil", "Brazil"), ("México", "Mexico"), ("  Argentina ", "Argentina"), ("República Argentina", "Argentina"),
     ("Ireland", "Ireland"), ("", None), ("   ", None), (None, None),
+    ("ARGENTINA", "Argentina"), ("argentina", "Argentina"), ("ArGeNtInA", "Argentina"),   # case
+    ("EL SALVADOR", "El Salvador"), ("south  korea", "South Korea"),
+    ("BOSNIA AND HERZEGOVINA", "Bosnia and Herzegovina"),       # small words stay small
+    ("MEXICO", "Mexico"), ("PERU", "Peru"), ("Peru", "Peru"), ("ESPAÑA", "Spain"),
+    ("república argentina", "Argentina"), ("REPUBLICA ARGENTINA", "Argentina"),     # with or without accent
+    ("TÜRKIYE", "Türkiye"),                                    # accents kept outside the list
 ])
 def test_normalize_country(raw, country):
     assert normalize_country(raw) == country

@@ -253,3 +253,11 @@ def test_each_reused_startup_gets_its_own_copy(tmp_path):
     assert es.reuse_previous(startups, [old], done) == 2
     done["Kilimo"]["enrichment"]["country"] = "Argentina"
     assert done["KILIMO"]["enrichment"]["country"] is None
+
+
+
+def test_selection_reads_any_spelling_of_argentina():
+    """Merged files written before countries were normalized."""
+    startups = [{"name": "A", "country": "ARGENTINA"}, {"name": "B", "country": "República Argentina"},
+                {"name": "C", "country": None}, {"name": "D", "country": "brasil"}]
+    assert [s["name"] for s in es.select(startups, False, [])] == ["A", "B", "C"]

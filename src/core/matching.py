@@ -7,6 +7,7 @@ rules. Kept free of the agent's dependencies so the scripts run without them.
 from __future__ import annotations
 
 import re
+import unicodedata
 from urllib.parse import urlparse
 
 
@@ -113,23 +114,35 @@ def name_from_website(url: str | None, not_from: set[str] | None = None) -> str 
 
 # Countries 
 
+# Keys as _country_key makes them: lowercase, no accents, no dots
 _COUNTRY_ALIASES = {
     "usa": "United States", "us": "United States", "u s": "United States", "u s a": "United States",
     "united states of america": "United States", "eeuu": "United States", "ee uu": "United States",
     "estados unidos": "United States", "uk": "United Kingdom", "u k": "United Kingdom",
     "great britain": "United Kingdom", "england": "United Kingdom", "reino unido": "United Kingdom",
-    "brasil": "Brazil", "méxico": "Mexico", "mexico": "Mexico", "perú": "Peru", "españa": "Spain",
-    "argentine republic": "Argentina", "republica argentina": "Argentina", "república argentina": "Argentina",
+    "brasil": "Brazil", "mexico": "Mexico", "peru": "Peru", "espana": "Spain",
+    "argentine republic": "Argentina", "republica argentina": "Argentina",
     "korea": "South Korea", "republic of korea": "South Korea",
 }
+_LOWER_WORDS = {"and", "of", "the", "y", "de", "del", "da", "do"}
+
+
+def _country_key(value: str) -> str:
+    plain = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    return re.sub(r"[.\s]+", " ", plain.lower()).strip()
 
 
 def normalize_country(value: str | None) -> str | None:
-    """One spelling per country ("USA", "EE.UU." -> "United States"); others as given, trimmed."""
+    """One spelling per country: "USA", "EE.UU." -> "United States"; "ARGENTINA",
+    "argentina" -> "Argentina". Countries not in the alias list get their words
+    capitalized ("EL SALVADOR" -> "El Salvador"), accents kept."""
     if not value or not value.strip():
         return None
-    key = re.sub(r"[.\s]+", " ", value.strip().lower()).strip()
-    return _COUNTRY_ALIASES.get(key) or _COUNTRY_ALIASES.get(key.replace(" ", "")) or value.strip()
+    key = _country_key(value)
+    if alias := _COUNTRY_ALIASES.get(key) or _COUNTRY_ALIASES.get(key.replace(" ", "")):
+        return alias
+    words = re.sub(r"\s+", " ", value.strip()).lower().split(" ")
+    return " ".join(w if i and w in _LOWER_WORDS else w[:1].upper() + w[1:] for i, w in enumerate(words))
 
 
 #  Funds
