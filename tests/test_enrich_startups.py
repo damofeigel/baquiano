@@ -54,6 +54,9 @@ def test_unreachable_site_is_reported_not_raised():
 
 def test_argentina_signals():
     assert es.argentina_signals("https://neworgans.com.ar", []) == [".ar domain"]
+    assert es.argentina_signals("neworgans.com.ar", []) == [".ar domain"]          # no scheme
+    assert es.argentina_signals("www.NEWORGANS.com.ar/es", []) == [".ar domain"]
+    assert es.argentina_signals("neworgans.com/ar", []) == []                      # a path, not the domain
     signals = es.argentina_signals("https://puna.bio", [PUNA_ABOUT.plain_text])
     assert signals == ["phone +54", "mentions Argentina", "Argentine city"]
     assert es.argentina_signals("https://acme.com", ["Offices in Mexico City"]) == []

@@ -132,6 +132,17 @@ def test_names_of_ordinary_words_are_never_dropped(tmp_path):
     ]
 
 
+def test_a_name_copied_into_the_sector_is_kept(tmp_path):
+    fund = _fund(tmp_path / "kaszek.com_20261022-141546.json", "Kaszek", [
+        {"name": "Kilimo", "sector": "Kilimo"},                                         # no website
+        {"name": "Puna", "sector": "Puna", "website": "https://punabio.com"},          # site spelled otherwise
+    ])
+    notes: list[str] = []
+    merged = mp.merge([fund], notes)
+    assert [(s["name"], s.get("renamed_from")) for s in merged] == [("Kilimo", None), ("Puna", None)]
+    assert notes == []
+
+
 def test_a_regional_sister_site_is_the_same_fund(tmp_path):
     main = _fund(tmp_path / "theyieldlab.com_20261014-234417.json", "The Yield Lab", [
         {"name": "Kigüi", "website": None}, {"name": "Beeflow", "website": "https://beeflow.com"}])

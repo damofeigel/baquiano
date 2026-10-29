@@ -37,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core import config  # noqa: E402
-from src.core.matching import company_domain, normalize_country  # noqa: E402
+from src.core.matching import company_domain, normalize_country, website_domain  # noqa: E402
 from src.core.structured_llm import (  # noqa: E402,F401  (re-exported for tests)
     Classifier, check_llm, make_llm_classifier, parse_json, quote_found,
 )
@@ -95,7 +95,7 @@ def collect_pages(browser: Any, website: str) -> tuple[list[dict[str, str]], str
 
 def argentina_signals(website: str | None, texts: list[str]) -> list[str]:
     signals = []
-    host = urlparse(website or "").netloc.lower()
+    host = website_domain(website) or ""          # also "empresa.com.ar", with no https://
     if host.endswith(".ar") or ".ar:" in host:
         signals.append(".ar domain")
     joined = "\n".join(texts)

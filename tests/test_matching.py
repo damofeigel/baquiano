@@ -13,7 +13,7 @@ from src.core.matching import (
 @pytest.mark.parametrize("name, sector", [
     ("AI & SaaS", None), ("FoodTech & AI", None), ("Exit FinTech", None), ("Web3", None),
     ("Exited", None), ("Acquired", None), ("AgTech", None), ("@Tech", None),
-    ("Liora", "Liora"),                                     # identical to its own sector tag
+    ("AgTech", "AgTech"),                                   # a tag copied into the sector too
 ])
 def test_tags_and_badges_are_not_names(name, sector):
     assert looks_like_category(name, sector)
@@ -22,6 +22,7 @@ def test_tags_and_badges_are_not_names(name, sector):
 @pytest.mark.parametrize("name, sector", [
     ("Puna Bio", "Agtech"), ("Kilimo", None), ("Agrotoken", "FinTech"), ("Energy Vault", None),
     ("AI Bio Labs", None), ("123Seguro", "Insurtech"), ("S4", None), ("Because Energy Matters", None), ("", None),
+    ("Kilimo", "Kilimo"), ("Liora", "liora"),               # the name copied into the sector is no tag
 ])
 def test_company_names_are_kept(name, sector):
     assert not looks_like_category(name, sector)
@@ -32,7 +33,7 @@ def test_company_names_are_kept(name, sector):
     ("Energy", "Energy", True),                             # its own sector tag
     ("Mobility", None, False), ("Crypto Energy", None, False), ("Logistics", "Mobility", False),
     ("All", None, False), ("Other", None, False),
-    ("Kilimo", None, False),                                 # not a category at all
+    ("Kilimo", None, False), ("Kilimo", "Kilimo", False),   # not a category at all
 ])
 def test_only_tag_words_make_a_category_certain(name, sector, sure):
     assert surely_category(name, sector) is sure

@@ -81,20 +81,17 @@ def company_domain(url: str | None) -> str | None:
 
 
 def looks_like_category(name: str, sector: str | None = None) -> bool:
-    """True for a name that may be a tag or badge: "AI & SaaS", "Exited", "Mobility",
-    or a name identical to the record's own sector."""
+    """True for a name that may be a tag or badge: "AI & SaaS", "Exited", "Mobility".
+    Only category words count: a name equal to its own sector ("Kilimo" / "Kilimo")
+    is a crawl that copied the name into the sector, not a tag."""
     words = re.findall(r"[a-z0-9]+", name.lower())
-    if not words:
-        return False
-    if sector and name.strip().casefold() == sector.strip().casefold():
-        return True
-    return all(word in CATEGORY_WORDS for word in words)
+    return bool(words) and all(word in CATEGORY_WORDS for word in words)
 
 
 def surely_category(name: str, sector: str | None = None) -> bool:
-    """A category beyond doubt: identical to its own sector, or category words with at least
-    one tag word ("Exit FinTech", "AI & SaaS"). "Mobility" or "Crypto Energy" alone may be
-    a company's real name."""
+    """A category beyond doubt: category words with at least one tag word ("Exit FinTech",
+    "AI & SaaS"), or ordinary words that are also the record's own sector tag ("Energy" /
+    "Energy"). "Mobility" or "Crypto Energy" alone may be a company's real name."""
     if not looks_like_category(name, sector):
         return False
     if sector and name.strip().casefold() == sector.strip().casefold():
