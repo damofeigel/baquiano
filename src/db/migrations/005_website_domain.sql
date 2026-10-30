@@ -9,8 +9,6 @@
 --   * The host drops a user:password ('https://foo.ar:pw@evil.com' is
 --     evil.com), a port, a final dot and spaces around it; a backslash counts
 --     as '/' (as browsers read it); '//acme.com' and 'http:puna.bio' work.
---   * mentions.domain (a stored generated column) is recomputed. Domain
---     identifiers already stored on actors are left as they are.
 --
 -- Change it together with the Python version: tests/test_db_website_domain.py
 -- compares the two.
@@ -22,13 +20,15 @@ BEGIN;
 CREATE OR REPLACE FUNCTION website_domain(url TEXT) RETURNS TEXT
 LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
 DECLARE
+    -- What Python's str.strip() and re's \s count as space: also a non-breaking space, newlines...
+    ws CONSTANT TEXT := '[\s\u001c-\u001f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]';
     u TEXT;
     scheme TEXT;
     rest TEXT;
     authority TEXT;
     host TEXT;
 BEGIN
-    u := replace(regexp_replace(coalesce(url, ''), '^\s+|\s+$', '', 'g'), E'\\', '/');
+    u := replace(regexp_replace(coalesce(url, ''), '^' || ws || '+|' || ws || '+$', '', 'g'), E'\\', '/');
     IF u = '' THEN
         RETURN NULL;
     END IF;
@@ -52,8 +52,9 @@ BEGIN
         END IF;
     END IF;
 
-    authority := regexp_replace(btrim(substring(rest FROM '^[^/?#]*')), '\s*:\s*', ':', 'g');
-    IF authority = '' OR authority ~ '\s' THEN
+    authority := regexp_replace(substring(rest FROM '^[^/?#]*'), '^' || ws || '+|' || ws || '+$', '', 'g');
+    authority := regexp_replace(authority, ws || '*:' || ws || '*', ':', 'g');
+    IF authority = '' OR authority ~ ws THEN
         RETURN NULL;                                         -- 'acme .com'
     END IF;
     host := regexp_replace(authority, '^.*@', '');           -- user:password
@@ -65,8 +66,5 @@ BEGIN
     RETURN nullif(host, '');
 END
 $$;
-
--- A stored generated column is only computed when its row is written
-UPDATE mentions SET website = website WHERE website IS NOT NULL;
 
 COMMIT;

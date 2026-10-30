@@ -20,6 +20,8 @@ URLS = [
     "tel:+5491111111111", "mailto:hola@acme.com", "whatsapp:+5491111", "javascript:void(0)", "ftp://acme.com",
     "hola@gmail.com", "contacto@acme.com.ar/x", "/portfolio", "not a url", "acme .com",
     "https://[broken", "https://[website]", "https://[::1]/", "", "   ", None,
+    "\xa0acme.com", "acme.com\xa0", "acme.com\n/es", "\tacme.com :\u00a08080/x", "acme.com\u2003",
+    "acme\xa0.com", "\u3000https://www.acme.com\u3000", "acme.com\r\n",          # scraped spaces
 ]
 
 

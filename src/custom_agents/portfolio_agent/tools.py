@@ -45,10 +45,8 @@ def _words(text: str) -> str:
 
 def url_key(url: str) -> str:
     """Comparable form of a URL: no scheme, "www.", trailing slash or #fragment."""
-    full = web_url(url)
-    parts = urlparse(full or url)
-    host = website_domain(full) if full else None
-    key = (host or parts.netloc.lower().removeprefix("www.")) + parts.path.rstrip("/")
+    parts = urlparse(web_url(url) or url)                 # "mailto:..." etc. kept as written
+    key = (website_domain(url) or parts.netloc.lower().removeprefix("www.")) + parts.path.rstrip("/")
     return f"{key}?{parts.query}" if parts.query else key
 
 

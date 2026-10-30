@@ -225,6 +225,8 @@ def merge(inputs: list[Path], notes: list[str] | None = None) -> list[dict]:
                     entry["conflicts"].setdefault(field, [entry[field]])
                     if value not in entry["conflicts"][field]:
                         entry["conflicts"][field].append(value)
+                    if field == "website" and not website_domain(entry[field]) and website_domain(value):
+                        entry[field] = value        # a real website beats "tel:..." or an email
             if domain := website_domain(startup.get("website")):
                 entry["_domains"].add(domain)
 
