@@ -205,6 +205,16 @@ def add_hints(enrichment: dict[str, Any]) -> dict[str, Any]:
     return enrichment
 
 
+def refresh_domain_signal(entry: dict[str, Any]) -> dict[str, Any]:
+    """Recompute ".ar domain" from the entry's website: it needs nothing but the website, so a
+    result stored before a fix (or with a website changed since) is brought up to date
+    without visiting the site. The text signals stay as found."""
+    enrichment = entry["enrichment"]
+    found = [s for s in enrichment.get("argentina_signals") or [] if s != ".ar domain"]
+    enrichment["argentina_signals"] = argentina_signals(entry.get("website"), []) + found
+    return entry
+
+
 def enrich_one(startup: dict, browser: Any, classify: Classifier, taxonomy: dict[str, Any]) -> dict[str, Any]:
     pages, status = collect_pages(browser, startup["website"]) if startup.get("website") else ([], "no website")
     fund_texts = [d["text"] for d in startup.get("descriptions", [])]
@@ -299,7 +309,7 @@ def main() -> None:
         done = {s["name"]: s for s in json.loads(out.read_text(encoding="utf-8"))["startups"] if s.get("enrichment")}
     reused = reuse_previous(merged["startups"], args.previous, done)
     for entry in done.values():
-        add_hints(entry["enrichment"])
+        add_hints(refresh_domain_signal(entry)["enrichment"])
     todo = [s for s in select(merged["startups"], args.all, args.names) if s["name"] not in done]
     if args.limit is not None:
         todo = todo[: args.limit]

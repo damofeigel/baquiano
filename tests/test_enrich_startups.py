@@ -63,6 +63,7 @@ def test_argentina_signals():
     assert es.argentina_signals("neworgans.com.ar", []) == [".ar domain"]          # no scheme
     assert es.argentina_signals("www.NEWORGANS.com.ar/es", []) == [".ar domain"]
     assert es.argentina_signals("neworgans.com/ar", []) == []                      # a path, not the domain
+    assert es.argentina_signals("empresa.com.ar/?next=https://x.com", []) == [".ar domain"]
     signals = es.argentina_signals("https://puna.bio", [PUNA_ABOUT.plain_text])
     assert signals == ["phone +54", "mentions Argentina", "Argentine city"]
     assert es.argentina_signals("https://acme.com", ["Offices in Mexico City"]) == []
@@ -306,3 +307,34 @@ def test_startups_matching_one_old_record_get_their_own_copy(tmp_path):
     first["country"] = "Argentina"
     first["checks"].append("changed")
     assert second["country"] is None and second["checks"] == ["year not on the pages"]
+
+
+@pytest.mark.parametrize("website, stored, signals", [
+    ("puna.com.ar", [], [".ar domain"]),                                  # stored before the scheme fix
+    ("https://puna.com.ar", ["phone +54"], [".ar domain", "phone +54"]),
+    ("https://puna.bio", [".ar domain", "Argentine city"], ["Argentine city"]),   # the website changed since
+    (None, None, []),
+])
+def test_the_domain_signal_is_recomputed_from_the_website(website, stored, signals):
+    entry = {"name": "Puna", "website": website, "enrichment": {"argentina_signals": stored}}
+    assert es.refresh_domain_signal(entry)["enrichment"]["argentina_signals"] == signals
+
+
+def test_old_results_get_the_domain_signal_on_load(tmp_path, monkeypatch):
+    merged = tmp_path / "startups_merged_x.json"
+    merged.write_text(json.dumps({"startups": [{"name": "Puna", "website": "puna.com.ar"},
+                                               {"name": "Nova", "website": "www.nova.com.ar"}]}))
+    out = tmp_path / "startups_enriched_x.json"                         # resumed
+    out.write_text(json.dumps({"startups": [{"name": "Puna", "website": "puna.com.ar", "enrichment": {
+        "country": None, "argentina_signals": [], "deep_tech": True}}]}))
+    old = _previous(tmp_path, [{"name": "Nova", "website": "https://nova.com.ar", "enrichment": {
+        "country": None, "argentina_signals": []}}])                     # from an earlier file
+    monkeypatch.setattr(sys, "argv", ["enrich_startups.py", str(merged), "--out", str(out),
+                                      "--previous", str(old), "--limit", "0"])
+    es.main()
+
+    result = json.loads(out.read_text())
+    saved = {s["name"]: s["enrichment"] for s in result["startups"]}
+    assert all(e["argentina_signals"] == [".ar domain"] and e["country_likely"] == "Argentina"
+               for e in saved.values())
+    assert (result["summary"]["argentina_likely"], result["summary"]["argentina_likely_deep_tech"]) == (2, 1)

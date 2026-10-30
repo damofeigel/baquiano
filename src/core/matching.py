@@ -40,10 +40,18 @@ def dedupe_key(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
+def with_scheme(url: str) -> str:
+    """A URL a browser can open: "www.kigui.io" -> "https://www.kigui.io"."""
+    url = url.strip()
+    return url if re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE) else f"https://{url}"
+
+
 def website_domain(url: str | None) -> str | None:
-    if not url:
+    """The host without www.: https://www.Puna.bio/es -> puna.bio. A scheme counts only at the
+    start, so puna.com.ar/?next=https://x.com -> puna.com.ar."""
+    if not url or not url.strip():
         return None
-    host = urlparse(url if "://" in url else f"https://{url}").netloc.lower()
+    host = urlparse(with_scheme(url)).netloc.lower()
     return host.removeprefix("www.") or None
 
 
@@ -138,12 +146,6 @@ def website_confirms_name(name: str, website_name: str | None) -> bool:
         return False
     key, label = dedupe_key(name), dedupe_key(website_name)
     return key == label or (len(key) >= 4 and key in label)
-
-
-def with_scheme(url: str) -> str:
-    """A URL a browser can open: "www.kigui.io" -> "https://www.kigui.io"."""
-    url = url.strip()
-    return url if re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE) else f"https://{url}"
 
 
 # Countries 

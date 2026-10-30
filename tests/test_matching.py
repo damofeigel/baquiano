@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.core.matching import (
-    company_domain, is_shared_site, looks_like_category, name_from_website, normalize_country,
+    company_domain, is_shared_site, website_domain, looks_like_category, name_from_website, normalize_country,
     registrable_domain, sister_of, surely_category, website_confirms_name, with_scheme,
 )
 
@@ -58,6 +58,18 @@ def test_a_website_confirms_a_name_it_spells(name, website_name, confirms):
 ])
 def test_with_scheme(url, full):
     assert with_scheme(url) == full
+
+
+@pytest.mark.parametrize("url, domain", [
+    ("https://www.Puna.bio/es", "puna.bio"), ("puna.bio", "puna.bio"), ("www.puna.com.ar/", "puna.com.ar"),
+    ("empresa.com.ar/?next=https://x.com", "empresa.com.ar"),       # '://' later in the URL
+    ("empresa.com.ar/go?u=http://x.com/a", "empresa.com.ar"),
+    ("https://empresa.com.ar/?next=https://x.com", "empresa.com.ar"),
+    ("  neworgans.com.ar  ", "neworgans.com.ar"),
+    (None, None), ("", None), ("   ", None),
+])
+def test_website_domain(url, domain):
+    assert website_domain(url) == domain
 
 
 @pytest.mark.parametrize("url, name", [
