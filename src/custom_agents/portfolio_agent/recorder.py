@@ -240,6 +240,9 @@ class PortfolioRecorder:
         for company in companies:
             if not company.name or not company.name.strip():
                 continue
+            if company.website and not _domain(company.website):
+                logger.info("Dropping %r for %s: not a website", company.website, company.name)
+                company = company.model_copy(update={"website": None})       # tel:, an email, "https://[x"
             if company.website and is_social_url(company.website):
                 logger.info("Dropping social-network website %s for %s", company.website, company.name)
                 company = company.model_copy(update={"website": None})

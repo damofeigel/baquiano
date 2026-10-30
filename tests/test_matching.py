@@ -6,7 +6,7 @@ import pytest
 
 from src.core.matching import (
     company_domain, is_shared_site, website_domain, looks_like_category, name_from_website, normalize_country,
-    registrable_domain, sister_of, surely_category, website_confirms_name, with_scheme,
+    registrable_domain, sister_of, surely_category, web_url, website_confirms_name,
 )
 
 
@@ -55,9 +55,24 @@ def test_a_website_confirms_a_name_it_spells(name, website_name, confirms):
     ("www.kigui.io", "https://www.kigui.io"), (" goflux.com.br/es ", "https://goflux.com.br/es"),
     ("https://puna.bio", "https://puna.bio"), ("HTTP://Puna.bio", "HTTP://Puna.bio"),
     ("empresa.com.ar/?next=https://x.com", "https://empresa.com.ar/?next=https://x.com"),
+    ("//acme.com/about", "https://acme.com/about"),                 # protocol-relative
+    ("http:puna.bio", "http://puna.bio"), ("https:/glaia.com", "https://glaia.com"),   # typos
+    ("acme.com:8080/x", "https://acme.com:8080/x"),                 # a port, not a scheme
+    ("https://acme.com\\@foo.ar", "https://acme.com/@foo.ar"),      # a backslash is a "/"
+    ("neworgans.com.ar /es", "https://neworgans.com.ar/es"),        # a space in the host
+    ("https://neworgans.com.ar :8443/", "https://neworgans.com.ar:8443/"),
 ])
-def test_with_scheme(url, full):
-    assert with_scheme(url) == full
+def test_web_url(url, full):
+    assert web_url(url) == full
+
+
+@pytest.mark.parametrize("url", [
+    "tel:+5491111111111", "mailto:hola@acme.com", "whatsapp:+5491111", "javascript:void(0)",
+    "ftp://acme.com", "hola@gmail.com", "contacto@acme.com.ar/x",    # other schemes, emails
+    "/portfolio", "not a url", "acme .com", "", "   ", None,
+])
+def test_values_that_are_no_website(url):
+    assert web_url(url) is None and website_domain(url) is None
 
 
 @pytest.mark.parametrize("url, domain", [
@@ -69,7 +84,11 @@ def test_with_scheme(url, full):
     ("neworgans.com.ar.", "neworgans.com.ar"), ("https://www.neworgans.com.ar./es", "neworgans.com.ar"),
     ("https://acme.com:443/x", "acme.com"), ("acme.com:8080", "acme.com"),          # a port
     ("https://foo.ar:pw@evil.com", "evil.com"), ("https://user@Acme.com", "acme.com"),  # user:password
-    ("https://[broken", None),
+    ("https://[broken", None), ("https://[website]", None),
+    ("//acme.com", "acme.com"), ("http:puna.bio", "puna.bio"),
+    ("https://acme.com\\@foo.ar", "acme.com"), ("https://foo.ar\\@evil.com", "foo.ar"),   # as a browser reads it
+    ("neworgans.com.ar /es", "neworgans.com.ar"), ("https://neworgans.com.ar :8443/", "neworgans.com.ar"),
+    ("neworgans.com.ar. /x", "neworgans.com.ar"),
     (None, None), ("", None), ("   ", None),
 ])
 def test_website_domain(url, domain):
@@ -159,3 +178,11 @@ def test_no_name_from_the_funds_own_site():
     assert name_from_website("https://17sigma.vc/portfolio/ai-saas", {"17sigma.vc"}) is None
     assert name_from_website("https://blog.17sigma.vc/x", {"17sigma.vc"}) is None
     assert name_from_website("https://lioraenergia.com.br", {"17sigma.vc"}) == "Lioraenergia"
+
+
+def test_values_that_are_no_website_never_share_a_domain():
+    """tel: numbers, emails and broken links used to collapse into one "domain" ('tel', 'gmail.com')."""
+    assert {website_domain(u) for u in ["tel:+5491111", "tel:+5492222", "http:puna.bio", "http:glaia.com"]} == {
+        None, "puna.bio", "glaia.com"}
+    assert company_domain("hola@gmail.com") is None and company_domain("https://gmail.com") is None
+    assert name_from_website("https://www.gmail.com") is None

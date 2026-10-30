@@ -178,6 +178,36 @@ def test_a_port_does_not_make_another_website(tmp_path):
     assert acme["funds"] == ["Fund A", "Fund B"] and acme["conflicts"] == {}
 
 
+def test_phone_numbers_and_emails_as_websites_do_not_merge_startups(tmp_path):
+    a = _fund(tmp_path / "a_20261001-000000.json", "Fund A", [
+        {"name": "Kilimo", "website": "tel:+5491111111111"}, {"name": "Puna", "website": "http:puna.bio"},
+        {"name": "Glaia", "website": "http:glaia.com"}, {"name": "Brava", "website": "hola@gmail.com"}])
+    b = _fund(tmp_path / "b_20261001-000000.json", "Fund B", [
+        {"name": "Beeflow", "website": "tel:+5492222222222"}, {"name": "Nova", "website": "contacto@gmail.com"},
+        {"name": "AI & SaaS", "website": "https://www.gmail.com"}])
+    notes: list[str] = []
+    merged = mp.merge([a, b], notes)
+    assert sorted(s["name"] for s in merged) == ["Beeflow", "Brava", "Glaia", "Kilimo", "Nova", "Puna"]
+    assert all(s["aliases"] == [s["name"]] for s in merged)
+    assert notes == ["Fund B: dropped 'AI & SaaS': a category, not a company name, and its only link is "
+                     "the fund's own site or a shared platform"]          # not renamed 'Gmail'
+
+
+@pytest.mark.parametrize("first, second, conflict", [
+    ("https://[broken", "https://[other", True),               # no domain on either side: compared as written
+    ("tel:+541", "tel:+542", True),
+    ("tel:+541", "TEL:+541 ", False),
+    ("https://acme.com", "https://www.acme.com/en", False),     # one domain
+    ("https://acme.com", "https://acme.io", True),
+])
+def test_websites_that_differ_are_kept_as_conflicts(tmp_path, first, second, conflict):
+    a = _fund(tmp_path / "a_20261001-000000.json", "Fund A", [{"name": "Acme", "website": first}])
+    b = _fund(tmp_path / "b_20261001-000000.json", "Fund B", [{"name": "Acme", "website": second}])
+    [acme] = mp.merge([a, b])
+    assert acme["website"] == first
+    assert acme["conflicts"] == ({"website": [first, second]} if conflict else {})
+
+
 def test_a_regional_sister_site_is_the_same_fund(tmp_path):
     main = _fund(tmp_path / "theyieldlab.com_20261014-234417.json", "The Yield Lab", [
         {"name": "Kigüi", "website": None}, {"name": "Beeflow", "website": "https://beeflow.com"}])

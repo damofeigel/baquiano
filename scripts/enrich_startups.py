@@ -37,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core import config  # noqa: E402
-from src.core.matching import company_domain, normalize_country, website_domain, with_scheme  # noqa: E402
+from src.core.matching import company_domain, normalize_country, web_url, website_domain  # noqa: E402
 from src.core.structured_llm import (  # noqa: E402,F401  (re-exported for tests)
     Classifier, check_llm, make_llm_classifier, parse_json, quote_found,
 )
@@ -70,7 +70,10 @@ ARGENTINA_SIGNALS = {
 
 def collect_pages(browser: Any, website: str) -> tuple[list[dict[str, str]], str]:
     """Homepage plus one about/contact page. Returns (pages, status)."""
-    website = with_scheme(website)                # funds often list "www.kigui.io"; a browser needs https://
+    url = web_url(website)                        # funds often list "www.kigui.io"; a browser needs https://
+    if not url or not website_domain(url):
+        return [], f"not a website: {website.strip()[:80]}"                 # tel:, an email, "https://[x"
+    website = url
     try:
         home = browser.go_to(website)
     except Exception as exc:
@@ -79,10 +82,10 @@ def collect_pages(browser: Any, website: str) -> tuple[list[dict[str, str]], str
     pages = [{"url": home.url or website, "text": home.plain_text[:HOME_CHARS]}]
     if not home.plain_text.strip():
         return pages, "empty"
-    base = urlparse(home.url or website).netloc.removeprefix("www.")
+    base = website_domain(home.url or website)
     for link in home.links:
         href = link.get("href", "")
-        if urlparse(href).netloc.removeprefix("www.") != base or href.rstrip("/") == (home.url or "").rstrip("/"):
+        if website_domain(href) != base or href.rstrip("/") == (home.url or "").rstrip("/"):
             continue
         if ABOUT_LINK.search(link.get("text", "")) or ABOUT_LINK.search(urlparse(href).path):
             try:

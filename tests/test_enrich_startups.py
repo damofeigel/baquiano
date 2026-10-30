@@ -53,6 +53,21 @@ def test_a_website_without_scheme_is_opened_with_https():
     assert status == "ok" and browser.visited == ["https://puna.bio", "https://puna.bio/about"]
 
 
+def test_protocol_relative_and_uppercase_links_are_followed():
+    home = SimpleNamespace(url="https://puna.bio/", plain_text="Puna Bio",
+                           links=[{"text": "About us", "href": "https://Puna.bio/about"}])
+    browser = FakeBrowser({"https://puna.bio": home, "https://Puna.bio/about": PUNA_ABOUT})
+    pages, status = es.collect_pages(browser, "//puna.bio")
+    assert status == "ok" and browser.visited == ["https://puna.bio", "https://Puna.bio/about"]
+
+
+@pytest.mark.parametrize("website", ["tel:+5491111111111", "hola@gmail.com", "https://[broken", "mailto:a@b.co"])
+def test_values_that_are_no_website_are_not_opened(website):
+    browser = FakeBrowser({})
+    pages, status = es.collect_pages(browser, website)
+    assert (pages, browser.visited) == ([], []) and status == f"not a website: {website}"
+
+
 def test_unreachable_site_is_reported_not_raised():
     pages, status = es.collect_pages(FakeBrowser({}), "https://gone.example")
     assert pages == [] and status == "unreachable: TimeoutError: https://gone.example"
@@ -68,6 +83,8 @@ def test_argentina_signals():
     assert es.argentina_signals("neworgans.com.ar.", []) == [".ar domain"]           # a final dot
     assert es.argentina_signals("https://neworgans.com.ar:8443/", []) == [".ar domain"]  # a port
     assert es.argentina_signals("https://foo.ar:pw@evil.com", []) == []               # the host is evil.com
+    assert es.argentina_signals("https://acme.com\\@foo.ar", []) == []               # a browser opens acme.com
+    assert es.argentina_signals("tel:+5491111111111", []) == []
     assert es.argentina_signals("https://neworgans.com", [], "https://www.neworgans.com.ar/") == [".ar domain"]
     assert es.argentina_signals("https://neworgans.com", [], "https://neworgans.com/es") == []
     signals = es.argentina_signals("https://puna.bio", [PUNA_ABOUT.plain_text])

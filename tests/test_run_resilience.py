@@ -240,6 +240,7 @@ def test_fund_slug_is_filesystem_safe():
     assert fund_slug("https://www.gridexponential.com/portfolio") == "gridexponential.com"
     assert fund_slug("gridexponential.com") == "gridexponential.com"
     assert fund_slug("http://user@Fund.Example:8080/x?y=1") == "fund.example"
+    assert fund_slug("//Fund.Example/portfolio") == "fund.example"
     assert fund_slug("not a url") == "not-a-url"
 
 

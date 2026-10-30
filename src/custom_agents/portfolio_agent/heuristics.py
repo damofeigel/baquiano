@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, Tag
 
 from src.core.browser import remove_consent_dialogs
+from src.core.matching import website_domain
 
 from .models import StartupInfo
 
@@ -59,7 +60,8 @@ _NAV_SKIP = ["script", "style", "noscript", "nav", "header", "footer", "form", "
 # --- URL helpers ----------------------------------------------------------------
 
 def _host(url: str) -> str:
-    return urlparse(url).netloc.lower().removeprefix("www.")
+    """The host as matching.website_domain reads it ("" when none): no port, user or www."""
+    return website_domain(url) or ""
 
 
 def _same_site(a: str, b: str) -> bool:

@@ -416,6 +416,42 @@ def test_social_network_websites_are_dropped():
 
 
 
+def test_values_that_are_no_website_are_dropped_and_never_break_a_batch():
+    """A broken link used to raise in the middle of add_companies, after some companies were added."""
+    evidence = Evidence()
+    evidence.add("Kilimo kilimo.com Brokenco Puna Bio puna.bio Beeflow Glaia hola@gmail.com", is_page=True, url=PORTFOLIO)
+    rec = PortfolioRecorder(evidence=evidence)
+    accepted, problems = rec.check_evidence([
+        StartupInfo(name="Kilimo", website="https://kilimo.com"),
+        StartupInfo(name="Brokenco", website="https://[brokenco"),
+        StartupInfo(name="Puna Bio", website="https://[website]"),          # a small model's placeholder
+        StartupInfo(name="Beeflow", website="tel:+5491111111111"),
+        StartupInfo(name="Glaia", website="hola@gmail.com"),
+    ])
+    assert problems == []
+    assert rec.add_companies(accepted) == (5, 0)
+    assert {c.name: c.website for c in rec.companies} == {
+        "Kilimo": "https://kilimo.com", "Brokenco": None, "Puna Bio": None, "Beeflow": None, "Glaia": None}
+
+
+def test_phone_numbers_and_emails_do_not_merge_companies():
+    rec = PortfolioRecorder()
+    rec.add_companies([StartupInfo(name="Kilimo", website="tel:+5491111111111"),
+                       StartupInfo(name="Beeflow", website="tel:+5492222222222"),
+                       StartupInfo(name="Puna Bio", website="hola@gmail.com"),
+                       StartupInfo(name="Glaia", website="contacto@gmail.com")])
+    assert [c.name for c in rec.companies] == ["Kilimo", "Beeflow", "Puna Bio", "Glaia"]
+
+
+def test_hosts_ignore_ports_users_and_case():
+    from src.custom_agents.portfolio_agent.heuristics import _same_site, is_social_url
+    assert is_social_url("https://user@linkedin.com/company/x") and is_social_url("ar.LinkedIn.com/in/x")
+    assert _same_site("https://acme.com:443/", "https://acme.com") and _same_site("https://Acme.com", "acme.com")
+    assert not is_social_url("https://[broken") and not _same_site("https://[broken", "https://acme.com")
+    assert url_key("https://acme.com:443/portfolio") == url_key("https://user@www.Acme.com/portfolio/")
+    assert url_key("mailto:hola@acme.com") == "hola@acme.com"          # not a website: as written
+
+
 # --- Knowing where to continue ----------------------------------------------------
 
 def test_batch_with_nothing_new_lists_saved_names():

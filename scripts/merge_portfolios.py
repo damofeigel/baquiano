@@ -238,7 +238,10 @@ def merge(inputs: list[Path], notes: list[str] | None = None) -> list[dict]:
 
 def _differs(field: str, a: object, b: object) -> bool:
     if field == "website":
-        return website_domain(str(a)) != website_domain(str(b))
+        da, db = website_domain(str(a)), website_domain(str(b))
+        if da and db:
+            return da != db
+        return str(a).strip().casefold() != str(b).strip().casefold()   # "tel:+541" vs "tel:+542"
     if isinstance(a, str) and isinstance(b, str):
         return a.strip().casefold() != b.strip().casefold()
     return a != b

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 
 def same_company_name(a: str, b: str) -> bool:
@@ -40,23 +40,59 @@ def dedupe_key(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-def with_scheme(url: str) -> str:
-    """A URL a browser can open: "www.kigui.io" -> "https://www.kigui.io"."""
-    url = url.strip()
-    return url if re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE) else f"https://{url}"
+_SCHEME = re.compile(r"^([a-z][a-z0-9+.-]*):", re.IGNORECASE)
+
+
+def web_url(url: str | None) -> str | None:
+    """A URL a browser can open, or None when the value is no website.
+
+    "www.kigui.io" -> "https://www.kigui.io", "//acme.com" -> "https://acme.com",
+    "http:puna.bio" -> "http://puna.bio". Backslashes count as "/" (browsers read
+    https://acme.com\\@foo.ar as acme.com) and spaces around the host are dropped
+    ("neworgans.com.ar /es"). None for other schemes (tel:, mailto:, whatsapp:,
+    ftp://), a bare email address (hola@gmail.com), a host with spaces inside
+    ("acme .com") or nothing at all.
+    """
+    if not url:
+        return None
+    url = url.strip().replace("\\", "/")
+    if url.startswith("//"):
+        url = "https:" + url
+    match = _SCHEME.match(url)
+    if match and url[match.end():].startswith("//"):
+        scheme, rest = match.group(1), url[match.end() + 2:]
+        if scheme.lower() not in ("http", "https"):
+            return None
+    elif match and match.group(1).lower() in ("http", "https"):
+        scheme, rest = match.group(1), url[match.end():].lstrip("/")      # "http:puna.bio"
+    elif match and "." not in match.group(1):
+        return None                                                        # tel:, mailto:, whatsapp:
+    else:
+        scheme, rest = "https", url                                        # "acme.com", "acme.com:8080"
+        if "@" in re.split(r"[/?#]", rest, maxsplit=1)[0]:
+            return None                                                    # an email address
+    cut = re.search(r"[/?#]", rest)
+    authority, tail = (rest[:cut.start()], rest[cut.start():]) if cut else (rest, "")
+    authority = re.sub(r"\s*:\s*", ":", authority.strip())   # "neworgans.com.ar :8443"
+    if not authority or re.search(r"\s", authority):
+        return None                                                        # "not a url", "acme .com"
+    return f"{scheme}://{authority}{tail}"
 
 
 def website_domain(url: str | None) -> str | None:
-    """The host without www.: https://www.Puna.bio/es -> puna.bio. A scheme counts only at the
-    start, so puna.com.ar/?next=https://x.com -> puna.com.ar. Spaces, a port, a user:password
-    and a final dot are dropped."""
-    if not url or not url.strip():
+    """The host of a website, lowercase, without www., a port, a user:password or a final
+    dot: https://www.Puna.bio:443/es -> puna.bio. None when there is no website (see
+    web_url). A scheme counts only at the start: puna.com.ar/?next=https://x.com -> puna.com.ar.
+    The database has a copy in SQL (migrations/005_website_domain.sql): change both."""
+    full = web_url(url)
+    if not full:
         return None
     try:
-        host = urlparse(with_scheme(url)).hostname or ""   # no port, no user:password, lowercase
+        host = urlsplit(full).hostname or ""
     except ValueError:                                     # "https://[broken"
         return None
-    return host.rstrip(".").removeprefix("www.") or None   # "puna.com.ar." is a full name
+    host = host.rstrip(".").removeprefix("www.")
+    return host if host and not re.search(r"[\s\[\]@:]", host) else None   # no IPv6 literal either
 
 
 # Names that are not company names
@@ -78,6 +114,9 @@ GENERIC_SITES = {
     "linkedin.com", "facebook.com", "instagram.com", "x.com", "twitter.com", "youtube.com", "github.com",
     "medium.com", "google.com", "sites.google.com", "wixsite.com", "notion.site", "linktr.ee", "angel.co",
     "wellfound.com", "crunchbase.com",
+    # Mail providers: "hola@gmail.com" read as a website names the provider, not the company
+    "gmail.com", "googlemail.com", "hotmail.com", "outlook.com", "live.com", "yahoo.com", "icloud.com",
+    "proton.me", "protonmail.com",
 }
 
 

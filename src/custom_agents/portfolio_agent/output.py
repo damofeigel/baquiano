@@ -5,17 +5,16 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
 from src.core import config
+from src.core.matching import website_domain
 
 from .models import FinderResult
 
 
 def fund_slug(url: str) -> str:
     """Filesystem-safe name for a fund, from its URL's domain."""
-    host = urlparse(url if "://" in url else f"https://{url}").netloc.lower()
-    host = host.split("@")[-1].split(":")[0].removeprefix("www.")
+    host = website_domain(url) or url.strip().lower()
     return re.sub(r"[^a-z0-9.-]+", "-", host).strip("-.") or "fund"
 
 

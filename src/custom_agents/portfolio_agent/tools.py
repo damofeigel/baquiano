@@ -23,6 +23,7 @@ from agents import function_tool
 
 from src.core.browser import BrowserManager
 from src.core.config import MAX_HTML_CHARS
+from src.core.matching import web_url, website_domain
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,10 @@ def _words(text: str) -> str:
 
 def url_key(url: str) -> str:
     """Comparable form of a URL: no scheme, "www.", trailing slash or #fragment."""
-    parts = urlparse(url if "://" in url else f"https://{url}")
-    key = parts.netloc.lower().removeprefix("www.") + parts.path.rstrip("/")
+    full = web_url(url)
+    parts = urlparse(full or url)
+    host = website_domain(full) if full else None
+    key = (host or parts.netloc.lower().removeprefix("www.")) + parts.path.rstrip("/")
     return f"{key}?{parts.query}" if parts.query else key
 
 
