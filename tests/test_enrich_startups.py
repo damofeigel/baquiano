@@ -47,6 +47,12 @@ def test_reads_homepage_and_about_page():
     assert "https://linkedin.com/company/puna" not in browser.visited   # other sites aren't followed
 
 
+def test_a_website_without_scheme_is_opened_with_https():
+    browser = FakeBrowser({"https://puna.bio": PUNA_HOME, "https://puna.bio/about": PUNA_ABOUT})
+    pages, status = es.collect_pages(browser, "puna.bio")
+    assert status == "ok" and browser.visited == ["https://puna.bio", "https://puna.bio/about"]
+
+
 def test_unreachable_site_is_reported_not_raised():
     pages, status = es.collect_pages(FakeBrowser({}), "https://gone.example")
     assert pages == [] and status == "unreachable: TimeoutError: https://gone.example"

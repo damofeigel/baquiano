@@ -132,15 +132,25 @@ def test_names_of_ordinary_words_are_never_dropped(tmp_path):
     ]
 
 
-def test_a_name_copied_into_the_sector_is_kept(tmp_path):
+def test_a_name_equal_to_its_sector_is_checked_against_the_website(tmp_path):
     fund = _fund(tmp_path / "kaszek.com_20261022-141546.json", "Kaszek", [
-        {"name": "Kilimo", "sector": "Kilimo"},                                         # no website
-        {"name": "Puna", "sector": "Puna", "website": "https://punabio.com"},          # site spelled otherwise
+        {"name": "Kilimo", "sector": "Kilimo", "website": "https://kilimoapp.com"},    # the site confirms it
+        {"name": "Puna", "sector": "Puna", "website": "https://punabio.com"},
+        {"name": "Health", "sector": "Health", "website": "https://acme.com"},         # a tag card
+        {"name": "Health", "sector": "Health", "website": "https://www.brava.health"}, # another one
+        {"name": "Nova", "sector": "Nova"},                                             # nothing to tell
     ])
     notes: list[str] = []
-    merged = mp.merge([fund], notes)
-    assert [(s["name"], s.get("renamed_from")) for s in merged] == [("Kilimo", None), ("Puna", None)]
-    assert notes == []
+    merged = {s["name"]: s for s in mp.merge([fund], notes)}
+
+    assert set(merged) == {"Kilimo", "Puna", "Acme", "Brava", "Nova"}      # two Health cards, two startups
+    assert "renamed_from" not in merged["Kilimo"] and "renamed_from" not in merged["Puna"]
+    assert merged["Acme"]["renamed_from"] == ["Health"] and merged["Brava"]["renamed_from"] == ["Health"]
+    assert notes == [
+        "Kaszek: renamed 'Health' to 'Acme' (from https://acme.com)",
+        "Kaszek: renamed 'Health' to 'Brava' (from https://www.brava.health)",
+        "Kaszek: kept 'Nova': may be a sector tag or a real name, and no website to tell",
+    ]
 
 
 def test_a_regional_sister_site_is_the_same_fund(tmp_path):

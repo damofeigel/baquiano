@@ -6,37 +6,58 @@ import pytest
 
 from src.core.matching import (
     company_domain, is_shared_site, looks_like_category, name_from_website, normalize_country,
-    registrable_domain, sister_of, surely_category,
+    registrable_domain, sister_of, surely_category, website_confirms_name, with_scheme,
 )
 
 
 @pytest.mark.parametrize("name, sector", [
     ("AI & SaaS", None), ("FoodTech & AI", None), ("Exit FinTech", None), ("Web3", None),
-    ("Exited", None), ("Acquired", None), ("AgTech", None), ("@Tech", None),
-    ("AgTech", "AgTech"),                                   # a tag copied into the sector too
+    ("Exited", None), ("Acquired", None), ("AgTech", None), ("@Tech", None), ("Mobility", None),
+    ("Health", "Health"), ("Deep Tech", "deep tech"),       # a tag card read as name and sector
+    ("Kilimo", "Kilimo"),                                    # or a real name copied: the website decides
 ])
-def test_tags_and_badges_are_not_names(name, sector):
+def test_tags_and_badges_may_not_be_names(name, sector):
     assert looks_like_category(name, sector)
 
 
 @pytest.mark.parametrize("name, sector", [
     ("Puna Bio", "Agtech"), ("Kilimo", None), ("Agrotoken", "FinTech"), ("Energy Vault", None),
     ("AI Bio Labs", None), ("123Seguro", "Insurtech"), ("S4", None), ("Because Energy Matters", None), ("", None),
-    ("Kilimo", "Kilimo"), ("Liora", "liora"),               # the name copied into the sector is no tag
+    ("Health", None), ("Kilimo", "Kilim"),
 ])
 def test_company_names_are_kept(name, sector):
     assert not looks_like_category(name, sector)
 
 
-@pytest.mark.parametrize("name, sector, sure", [
-    ("AI & SaaS", None, True), ("Exit FinTech", None, True), ("Crypto Startups", None, True),
-    ("Energy", "Energy", True),                             # its own sector tag
-    ("Mobility", None, False), ("Crypto Energy", None, False), ("Logistics", "Mobility", False),
-    ("All", None, False), ("Other", None, False),
-    ("Kilimo", None, False), ("Kilimo", "Kilimo", False),   # not a category at all
+@pytest.mark.parametrize("name, sure", [
+    ("AI & SaaS", True), ("Exit FinTech", True), ("Crypto Startups", True), ("FinTech", True),
+    ("Mobility", False), ("Crypto Energy", False), ("Energy", False),     # ordinary words may be a name
+    ("All", False), ("Other", False),
+    ("Health", False), ("Kilimo", False), ("", False),
 ])
-def test_only_tag_words_make_a_category_certain(name, sector, sure):
-    assert surely_category(name, sector) is sure
+def test_only_tag_words_make_a_category_certain(name, sure):
+    assert surely_category(name) is sure
+
+
+@pytest.mark.parametrize("name, website_name, confirms", [
+    ("Kilimo", "Kilimo", True), ("Logistics", "Logistics", True),
+    ("Kilimo", "Kilimoapp", True), ("Puna", "Punabio", True),           # the domain contains the name
+    ("Health", "Acme", False), ("Energy", "Lioraenergia", False),       # a different name
+    ("Bio", "Punabio", False),                                          # too short to be contained
+    ("FinTech", "Fintechlatam", False), ("FinTech", "Fintech", False),  # a tag word never confirms
+    ("Kilimo", None, False),
+])
+def test_a_website_confirms_a_name_it_spells(name, website_name, confirms):
+    assert website_confirms_name(name, website_name) is confirms
+
+
+@pytest.mark.parametrize("url, full", [
+    ("www.kigui.io", "https://www.kigui.io"), (" goflux.com.br/es ", "https://goflux.com.br/es"),
+    ("https://puna.bio", "https://puna.bio"), ("HTTP://Puna.bio", "HTTP://Puna.bio"),
+    ("empresa.com.ar/?next=https://x.com", "https://empresa.com.ar/?next=https://x.com"),
+])
+def test_with_scheme(url, full):
+    assert with_scheme(url) == full
 
 
 @pytest.mark.parametrize("url, name", [

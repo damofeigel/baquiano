@@ -37,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core import config  # noqa: E402
-from src.core.matching import company_domain, normalize_country, website_domain  # noqa: E402
+from src.core.matching import company_domain, normalize_country, website_domain, with_scheme  # noqa: E402
 from src.core.structured_llm import (  # noqa: E402,F401  (re-exported for tests)
     Classifier, check_llm, make_llm_classifier, parse_json, quote_found,
 )
@@ -70,6 +70,7 @@ ARGENTINA_SIGNALS = {
 
 def collect_pages(browser: Any, website: str) -> tuple[list[dict[str, str]], str]:
     """Homepage plus one about/contact page. Returns (pages, status)."""
+    website = with_scheme(website)                # funds often list "www.kigui.io"; a browser needs https://
     try:
         home = browser.go_to(website)
     except Exception as exc:

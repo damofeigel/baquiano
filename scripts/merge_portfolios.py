@@ -37,7 +37,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core.matching import (  # noqa: E402
     dedupe_key, looks_like_category, name_from_website, normalize_country, registrable_domain, same_company_name,
-    sister_of, surely_category, website_domain,
+    sister_of, surely_category, website_confirms_name, website_domain,
 )
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -113,21 +113,21 @@ def clean_startup(startup: dict, fund_domains: set[str] | None = None) -> tuple[
     A tag or badge read as the name ("AI & SaaS", "Exited") is replaced by a
     name from the startup's website; without one there is nothing to identify.
     A link to the fund's own site (FUND_DOMAINS) doesn't count as the startup's.
-    A name of ordinary words only ("Mobility") may be real: it is kept, not
-    dropped, when there is no website to rename it from, and a website that
-    spells the name (mobility.io) confirms it.
+    A name that may be real ("Mobility", or a name equal to its own sector) is
+    kept when its website spells it ("Kilimo" at kilimoapp.com), and kept with
+    a note when there is no website to tell; only a sure tag is dropped.
     """
     startup = {**startup, "country": normalize_country(startup.get("country"))}
     name = startup["name"]
     if not looks_like_category(name, startup.get("sector")):
         return startup, None
     better = name_from_website(startup.get("website"), fund_domains)
-    if better and dedupe_key(better) == dedupe_key(name):
+    if website_confirms_name(name, better):
         return startup, None                     # the website is named after it: a real name
     if not better:
         why = ("its only link is the fund's own site or a shared platform" if startup.get("website")
                else "no website")
-        if not surely_category(name, startup.get("sector")):
+        if not surely_category(name):
             return startup, f"kept '{name}': may be a sector tag or a real name, and {why} to tell"
         return None, f"dropped '{name}': a category, not a company name, and {why}"
     description = startup.get("description")

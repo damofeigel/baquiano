@@ -80,23 +80,29 @@ def company_domain(url: str | None) -> str | None:
     return None if is_shared_site(domain) else domain
 
 
+def _words(name: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", name.lower())
+
+
 def looks_like_category(name: str, sector: str | None = None) -> bool:
-    """True for a name that may be a tag or badge: "AI & SaaS", "Exited", "Mobility".
-    Only category words count: a name equal to its own sector ("Kilimo" / "Kilimo")
-    is a crawl that copied the name into the sector, not a tag."""
-    words = re.findall(r"[a-z0-9]+", name.lower())
-    return bool(words) and all(word in CATEGORY_WORDS for word in words)
-
-
-def surely_category(name: str, sector: str | None = None) -> bool:
-    """A category beyond doubt: category words with at least one tag word ("Exit FinTech",
-    "AI & SaaS"), or ordinary words that are also the record's own sector tag ("Energy" /
-    "Energy"). "Mobility" or "Crypto Energy" alone may be a company's real name."""
-    if not looks_like_category(name, sector):
+    """True for a name that may be a tag or badge: "AI & SaaS", "Exited", "Mobility", or a
+    name identical to the record's own sector ("Health" / "Health": a tag card read as both).
+    That may also be a real name the crawl copied into the sector ("Kilimo" / "Kilimo"),
+    which the startup's website can confirm (website_confirms_name)."""
+    words = _words(name)
+    if not words:
         return False
     if sector and name.strip().casefold() == sector.strip().casefold():
         return True
-    return any(word in TAG_WORDS for word in re.findall(r"[a-z0-9]+", name.lower()))
+    return all(word in CATEGORY_WORDS for word in words)
+
+
+def surely_category(name: str) -> bool:
+    """A category beyond doubt: category words with at least one tag word ("Exit FinTech",
+    "AI & SaaS"). "Mobility", "Crypto Energy" or a name equal to its sector may be a
+    company's real name."""
+    words = _words(name)
+    return bool(words) and all(w in CATEGORY_WORDS for w in words) and any(w in TAG_WORDS for w in words)
 
 
 # Second levels under a country code that are part of the suffix: puna.com.ar, acme.co.uk
@@ -122,6 +128,22 @@ def name_from_website(url: str | None, not_from: set[str] | None = None) -> str 
         return None
     label = domain.split(".")[0]
     return label.capitalize() if len(label) >= 3 else None
+
+
+def website_confirms_name(name: str, website_name: str | None) -> bool:
+    """The startup's own domain spells NAME ("Logistics" at logistics.io) or contains it
+    ("Kilimo" at kilimoapp.com, at least 4 characters): the name is real, not a tag.
+    A tag word never counts ("FinTech" at fintechlatam.com is still a tag)."""
+    if not website_name or surely_category(name):
+        return False
+    key, label = dedupe_key(name), dedupe_key(website_name)
+    return key == label or (len(key) >= 4 and key in label)
+
+
+def with_scheme(url: str) -> str:
+    """A URL a browser can open: "www.kigui.io" -> "https://www.kigui.io"."""
+    url = url.strip()
+    return url if re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE) else f"https://{url}"
 
 
 # Countries 
