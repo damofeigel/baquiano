@@ -48,11 +48,15 @@ def with_scheme(url: str) -> str:
 
 def website_domain(url: str | None) -> str | None:
     """The host without www.: https://www.Puna.bio/es -> puna.bio. A scheme counts only at the
-    start, so puna.com.ar/?next=https://x.com -> puna.com.ar. Spaces and a final dot are dropped."""
+    start, so puna.com.ar/?next=https://x.com -> puna.com.ar. Spaces, a port, a user:password
+    and a final dot are dropped."""
     if not url or not url.strip():
         return None
-    host = urlparse(with_scheme(url)).netloc.lower().rstrip(".")      # "puna.com.ar." is a full name
-    return host.removeprefix("www.") or None
+    try:
+        host = urlparse(with_scheme(url)).hostname or ""   # no port, no user:password, lowercase
+    except ValueError:                                     # "https://[broken"
+        return None
+    return host.rstrip(".").removeprefix("www.") or None   # "puna.com.ar." is a full name
 
 
 # Names that are not company names

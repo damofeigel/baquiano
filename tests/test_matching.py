@@ -67,6 +67,9 @@ def test_with_scheme(url, full):
     ("https://empresa.com.ar/?next=https://x.com", "empresa.com.ar"),
     ("  neworgans.com.ar  ", "neworgans.com.ar"),
     ("neworgans.com.ar.", "neworgans.com.ar"), ("https://www.neworgans.com.ar./es", "neworgans.com.ar"),
+    ("https://acme.com:443/x", "acme.com"), ("acme.com:8080", "acme.com"),          # a port
+    ("https://foo.ar:pw@evil.com", "evil.com"), ("https://user@Acme.com", "acme.com"),  # user:password
+    ("https://[broken", None),
     (None, None), ("", None), ("   ", None),
 ])
 def test_website_domain(url, domain):

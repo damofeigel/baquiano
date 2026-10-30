@@ -171,6 +171,13 @@ def test_a_name_equal_to_its_sector_is_checked_against_the_website(tmp_path):
     ]
 
 
+def test_a_port_does_not_make_another_website(tmp_path):
+    a = _fund(tmp_path / "a_20261001-000000.json", "Fund A", [{"name": "Acme", "website": "https://acme.com:443/"}])
+    b = _fund(tmp_path / "b_20261001-000000.json", "Fund B", [{"name": "Acme Labs", "website": "https://acme.com"}])
+    [acme] = mp.merge([a, b])
+    assert acme["funds"] == ["Fund A", "Fund B"] and acme["conflicts"] == {}
+
+
 def test_a_regional_sister_site_is_the_same_fund(tmp_path):
     main = _fund(tmp_path / "theyieldlab.com_20261014-234417.json", "The Yield Lab", [
         {"name": "Kigüi", "website": None}, {"name": "Beeflow", "website": "https://beeflow.com"}])

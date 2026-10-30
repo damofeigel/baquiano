@@ -95,8 +95,7 @@ def collect_pages(browser: Any, website: str) -> tuple[list[dict[str, str]], str
 
 
 def _is_ar(url: str | None) -> bool:
-    host = website_domain(url) or ""              # also "empresa.com.ar", with no https://
-    return host.endswith(".ar") or ".ar:" in host
+    return (website_domain(url) or "").endswith(".ar")      # also "empresa.com.ar", with no https://
 
 
 def argentina_signals(website: str | None, texts: list[str], landed: str | None = None) -> list[str]:

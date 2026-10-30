@@ -66,6 +66,8 @@ def test_argentina_signals():
     assert es.argentina_signals("empresa.com.ar/?next=https://x.com", []) == [".ar domain"]
     assert es.argentina_signals("neworgans.com.ar ", []) == [".ar domain"]           # a space
     assert es.argentina_signals("neworgans.com.ar.", []) == [".ar domain"]           # a final dot
+    assert es.argentina_signals("https://neworgans.com.ar:8443/", []) == [".ar domain"]  # a port
+    assert es.argentina_signals("https://foo.ar:pw@evil.com", []) == []               # the host is evil.com
     assert es.argentina_signals("https://neworgans.com", [], "https://www.neworgans.com.ar/") == [".ar domain"]
     assert es.argentina_signals("https://neworgans.com", [], "https://neworgans.com/es") == []
     signals = es.argentina_signals("https://puna.bio", [PUNA_ABOUT.plain_text])
