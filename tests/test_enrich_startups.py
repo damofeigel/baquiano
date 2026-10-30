@@ -66,6 +66,8 @@ def test_argentina_signals():
     assert es.argentina_signals("empresa.com.ar/?next=https://x.com", []) == [".ar domain"]
     assert es.argentina_signals("neworgans.com.ar ", []) == [".ar domain"]           # a space
     assert es.argentina_signals("neworgans.com.ar.", []) == [".ar domain"]           # a final dot
+    assert es.argentina_signals("https://neworgans.com", [], "https://www.neworgans.com.ar/") == [".ar domain"]
+    assert es.argentina_signals("https://neworgans.com", [], "https://neworgans.com/es") == []
     signals = es.argentina_signals("https://puna.bio", [PUNA_ABOUT.plain_text])
     assert signals == ["phone +54", "mentions Argentina", "Argentine city"]
     assert es.argentina_signals("https://acme.com", ["Offices in Mexico City"]) == []
@@ -311,14 +313,16 @@ def test_startups_matching_one_old_record_get_their_own_copy(tmp_path):
     assert second["country"] is None and second["checks"] == ["year not on the pages"]
 
 
-@pytest.mark.parametrize("website, stored, signals", [
-    ("puna.com.ar", [], [".ar domain"]),                                  # stored before the scheme fix
-    ("https://puna.com.ar", ["phone +54"], [".ar domain", "phone +54"]),
-    ("https://puna.bio", [".ar domain", "Argentine city"], ["Argentine city"]),   # the website changed since
-    (None, None, []),
+@pytest.mark.parametrize("website, stored, pages_read, signals", [
+    ("puna.com.ar", [], [], [".ar domain"]),                              # stored before the scheme fix
+    ("https://puna.com.ar", ["phone +54"], [], [".ar domain", "phone +54"]),
+    ("https://puna.bio", [".ar domain", "Argentine city"], [], ["Argentine city"]),   # the website changed since
+    ("https://puna.bio", [], ["https://puna.com.ar/", "https://puna.bio/about"], [".ar domain"]),   # redirected
+    ("https://puna.bio", [], ["https://puna.bio/", "https://puna.com.ar/about"], []),  # only the landing page
+    (None, None, None, []),
 ])
-def test_the_domain_signal_is_recomputed_from_the_website(website, stored, signals):
-    entry = {"name": "Puna", "website": website, "enrichment": {"argentina_signals": stored}}
+def test_the_domain_signal_is_recomputed_from_the_website(website, stored, pages_read, signals):
+    entry = {"name": "Puna", "website": website, "enrichment": {"argentina_signals": stored, "pages_read": pages_read}}
     assert es.refresh_domain_signal(entry)["enrichment"]["argentina_signals"] == signals
 
 
@@ -340,3 +344,12 @@ def test_old_results_get_the_domain_signal_on_load(tmp_path, monkeypatch):
     assert all(e["argentina_signals"] == [".ar domain"] and e["country_likely"] == "Argentina"
                for e in saved.values())
     assert (result["summary"]["argentina_likely"], result["summary"]["argentina_likely_deep_tech"]) == (2, 1)
+
+
+def test_a_redirect_to_an_ar_site_counts(monkeypatch):
+    home = SimpleNamespace(url="https://www.neworgans.com.ar/", plain_text="Organ printing", links=[])
+    monkeypatch.setattr(es, "verify", lambda result, texts, taxonomy: {"country": None, "checks": []})
+    enrichment = es.enrich_one({"name": "New Organs", "website": "https://neworgans.com"},
+                               FakeBrowser({"https://neworgans.com": home}), lambda messages, schema: {}, TAXONOMY)
+    assert enrichment["argentina_signals"] == [".ar domain"] and enrichment["country_likely"] == "Argentina"
+    assert enrichment["pages_read"] == ["https://www.neworgans.com.ar/"]

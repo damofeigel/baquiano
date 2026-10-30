@@ -94,11 +94,17 @@ def collect_pages(browser: Any, website: str) -> tuple[list[dict[str, str]], str
     return pages, "ok"
 
 
-def argentina_signals(website: str | None, texts: list[str]) -> list[str]:
+def _is_ar(url: str | None) -> bool:
+    host = website_domain(url) or ""              # also "empresa.com.ar", with no https://
+    return host.endswith(".ar") or ".ar:" in host
+
+
+def argentina_signals(website: str | None, texts: list[str], landed: str | None = None) -> list[str]:
+    """Signals of an Argentine company. ".ar domain" counts for the recorded website or for
+    LANDED, the page the browser ended on (neworgans.com redirecting to neworgans.com.ar)."""
     website = (website or "").strip()
     signals = []
-    host = website_domain(website) or ""          # also "empresa.com.ar", with no https://
-    if host.endswith(".ar") or ".ar:" in host:
+    if _is_ar(website) or _is_ar(landed):
         signals.append(".ar domain")
     joined = "\n".join(texts)
     for label, pattern in ARGENTINA_SIGNALS.items():
@@ -207,12 +213,14 @@ def add_hints(enrichment: dict[str, Any]) -> dict[str, Any]:
 
 
 def refresh_domain_signal(entry: dict[str, Any]) -> dict[str, Any]:
-    """Recompute ".ar domain" from the entry's website: it needs nothing but the website, so a
-    result stored before a fix (or with a website changed since) is brought up to date
-    without visiting the site. The text signals stay as found."""
+    """Recompute ".ar domain" from the entry's website and the page the browser landed on (the
+    first of pages_read): it needs nothing else, so a result stored before a fix (or with a
+    website changed since) is brought up to date without visiting the site. The text
+    signals stay as found."""
     enrichment = entry["enrichment"]
     found = [s for s in enrichment.get("argentina_signals") or [] if s != ".ar domain"]
-    enrichment["argentina_signals"] = argentina_signals(entry.get("website"), []) + found
+    landed = (enrichment.get("pages_read") or [None])[0]
+    enrichment["argentina_signals"] = argentina_signals(entry.get("website"), [], landed) + found
     return entry
 
 
@@ -220,7 +228,8 @@ def enrich_one(startup: dict, browser: Any, classify: Classifier, taxonomy: dict
     pages, status = collect_pages(browser, startup["website"]) if startup.get("website") else ([], "no website")
     fund_texts = [d["text"] for d in startup.get("descriptions", [])]
     texts = [p["text"] for p in pages] + fund_texts
-    signals = argentina_signals(startup.get("website"), [p["text"] for p in pages])
+    signals = argentina_signals(startup.get("website"), [p["text"] for p in pages],
+                                pages[0]["url"] if pages else None)      # after any redirect
     result = classify(build_messages(startup, pages, signals, taxonomy), result_schema(taxonomy))
     result = verify(result, texts, taxonomy)
     return add_hints({
