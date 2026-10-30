@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import merge_portfolios as mp  # noqa: E402
@@ -130,6 +132,22 @@ def test_names_of_ordinary_words_are_never_dropped(tmp_path):
         "17 Sigma: renamed 'Marketplace' to 'Mercadoagro' (from https://www.mercadoagro.com.ar)",
         "17 Sigma: dropped 'FinTech': a category, not a company name, and no website",
     ]
+
+
+@pytest.mark.parametrize("record, name, note", [
+    ({"name": "Health", "sector": "Health", "website": "https://acme.com"}, "Acme",       # a tag outside the
+     "renamed 'Health' to 'Acme' (from https://acme.com)"),                               # word list
+    ({"name": "Deep Tech", "sector": "deep tech", "website": "https://www.brava.health"}, "Brava",
+     "renamed 'Deep Tech' to 'Brava' (from https://www.brava.health)"),
+    ({"name": "Kilimo", "sector": "Kilimo", "website": "https://kilimoapp.com"}, "Kilimo", None),  # confirmed
+    ({"name": "Health", "sector": "Health"}, "Health",
+     "kept 'Health': may be a sector tag or a real name, and no website to tell"),
+    ({"name": "Health", "sector": "Healthcare", "website": "https://acme.com"}, "Health", None),  # not its sector
+])
+def test_a_tag_copied_into_the_sector_is_handled(record, name, note):
+    startup, why = mp.clean_startup(record)
+    assert (startup["name"], why) == (name, note)
+    assert startup.get("renamed_from") == (record["name"] if name != record["name"] else None)
 
 
 def test_a_name_equal_to_its_sector_is_checked_against_the_website(tmp_path):
