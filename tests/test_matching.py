@@ -66,6 +66,7 @@ def test_with_scheme(url, full):
     ("empresa.com.ar/go?u=http://x.com/a", "empresa.com.ar"),
     ("https://empresa.com.ar/?next=https://x.com", "empresa.com.ar"),
     ("  neworgans.com.ar  ", "neworgans.com.ar"),
+    ("neworgans.com.ar.", "neworgans.com.ar"), ("https://www.neworgans.com.ar./es", "neworgans.com.ar"),
     (None, None), ("", None), ("   ", None),
 ])
 def test_website_domain(url, domain):

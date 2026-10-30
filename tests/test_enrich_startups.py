@@ -64,6 +64,8 @@ def test_argentina_signals():
     assert es.argentina_signals("www.NEWORGANS.com.ar/es", []) == [".ar domain"]
     assert es.argentina_signals("neworgans.com/ar", []) == []                      # a path, not the domain
     assert es.argentina_signals("empresa.com.ar/?next=https://x.com", []) == [".ar domain"]
+    assert es.argentina_signals("neworgans.com.ar ", []) == [".ar domain"]           # a space
+    assert es.argentina_signals("neworgans.com.ar.", []) == [".ar domain"]           # a final dot
     signals = es.argentina_signals("https://puna.bio", [PUNA_ABOUT.plain_text])
     assert signals == ["phone +54", "mentions Argentina", "Argentine city"]
     assert es.argentina_signals("https://acme.com", ["Offices in Mexico City"]) == []

@@ -95,6 +95,7 @@ def collect_pages(browser: Any, website: str) -> tuple[list[dict[str, str]], str
 
 
 def argentina_signals(website: str | None, texts: list[str]) -> list[str]:
+    website = (website or "").strip()
     signals = []
     host = website_domain(website) or ""          # also "empresa.com.ar", with no https://
     if host.endswith(".ar") or ".ar:" in host:
@@ -106,7 +107,7 @@ def argentina_signals(website: str | None, texts: list[str]) -> list[str]:
     return signals
 
 
-#  The LLM call --
+#  The LLM call
 
 def result_schema(taxonomy: dict[str, Any]) -> dict[str, Any]:
     nullable = lambda t: {"type": [t, "null"]}  # noqa: E731
@@ -231,7 +232,7 @@ def enrich_one(startup: dict, browser: Any, classify: Classifier, taxonomy: dict
     })
 
 
-#  Running over a merged file --
+#  Running over a merged file 
 
 def select(startups: list[dict], include_all: bool, names: list[str]) -> list[dict]:
     if names:
