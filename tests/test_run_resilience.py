@@ -110,6 +110,58 @@ def test_run_reraises_when_nothing_was_recorded(monkeypatch, tmp_path):
         portfolio_agent.close()
 
 
+def _server_error():
+    import httpx
+
+    request = httpx.Request("POST", "http://x/v1/chat/completions")
+    return agent_module.openai.InternalServerError(
+        "does not match the expected peg-native format", response=httpx.Response(500, request=request), body=None)
+
+
+def test_a_reply_the_server_cannot_read_is_asked_again_with_what_was_saved(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
+    portfolio_agent = agent_module.PortfolioAgent()
+    inputs = []
+
+    async def fake_run(agent, run_input, **kwargs):
+        inputs.append(run_input)
+        if len(inputs) == 1:
+            portfolio_agent.recorder.add_companies([StartupInfo(name="Acme")])
+            raise _server_error()
+        portfolio_agent.recorder.add_companies([StartupInfo(name="Beta")])
+        portfolio_agent.recorder.finished = True
+        return type("Result", (), {"final_output": "finished", "raw_responses": []})()
+
+    monkeypatch.setattr(agent_module.Runner, "run", fake_run)
+    try:
+        result = asyncio.run(portfolio_agent.run("https://fund.example", mode="agent"))
+    finally:
+        portfolio_agent.close()
+
+    assert [s.name for s in result.startups] == ["Acme", "Beta"]
+    assert result.errors == ["Fund name was not identified."] or not result.errors
+    assert "Acme" in inputs[1][1]["content"] and "fund.example" in inputs[1][0]["content"]
+
+
+def test_server_errors_on_every_reply_end_the_run_without_a_crash(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_module.config, "OUTPUT_DIR", tmp_path)
+    portfolio_agent = agent_module.PortfolioAgent()
+    attempts = []
+
+    async def fake_run(agent, run_input, **kwargs):
+        attempts.append(1)
+        raise _server_error()
+
+    monkeypatch.setattr(agent_module.Runner, "run", fake_run)
+    try:
+        result = asyncio.run(portfolio_agent.run("https://fund.example", mode="agent"))
+    finally:
+        portfolio_agent.close()
+
+    assert len(attempts) == agent_module.MAX_RECOVERIES + 1
+    assert result.startups == [] and any("usable tool call" in e for e in result.errors)
+
+
 # --- Context trimming ---------------------------------------------------------
 
 class _Data:

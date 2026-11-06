@@ -242,6 +242,12 @@ def name_from_website(url: str | None, not_from: set[str] | None = None) -> str 
     return label.capitalize() if len(label) >= 3 else None
 
 
+def domain_as_name(url: str | None, not_from: set[str] | None = None) -> str | None:
+    """The whole domain as a name, for a card with nothing better: ng.cash -> "Ng.cash"."""
+    domain = registrable_domain(company_domain(url))
+    return domain.capitalize() if domain and domain not in (not_from or set()) else None
+
+
 def website_confirms_name(name: str, website_name: str | None) -> bool:
     """The startup's own domain spells NAME ("Logistics" at logistics.io) or contains it
     ("Kilimo" at kilimoapp.com, at least 4 characters): the name is real, not a tag.

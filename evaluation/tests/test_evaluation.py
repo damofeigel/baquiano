@@ -277,3 +277,31 @@ def test_changed_pair_labels_count_and_removed_ones_do_not(tmp_path):
     pairs.write_text("pair_id,label\n1,no_match\n2,\n")
     rows = [{**_matching_row("a", "match", "match"), "pair_id": "1"}, {**_matching_row("a", "match", "match"), "pair_id": "2"}]
     assert [r["label"] for r in plot_results.relabel_matching(rows, pairs)] == ["no_match"]
+
+
+def test_a_failed_test_counts_what_it_missed_and_a_retry_replaces_it(tmp_path):
+    fund = tmp_path / "f"
+    fund.mkdir()
+    (fund / "meta.json").write_text(json.dumps({"reviewed": True}))
+    (fund / "gold.csv").write_text("keep,name,website,found_by,note\nyes,Puna,,,\nyes,Belvo,,,\n")
+    base = {"setting": "a", "fund": "f", "repeat": 0, "seconds": 5,
+            "usage": {"calls": 1, "prompt_tokens": 1, "completion_tokens": 1, "reasoning_tokens": 0}}
+    failed = {**base, "failed": "InternalServerError: 500"}
+    summary = plot_results.summarize_detection(plot_results.rescore_detection([failed], tmp_path))[0]
+    assert (summary["failed"], summary["correct"], summary["missed"]) == (1, 0, 2)
+    retried = {**base, "found": [{"name": "Puna"}]}
+    summary = plot_results.summarize_detection(plot_results.rescore_detection([failed, retried], tmp_path))[0]
+    assert (summary["tests"], summary["failed"], summary["correct"], summary["missed"]) == (1, 0, 1, 1)
+
+
+def test_a_company_counts_by_its_website_when_the_names_differ():
+    gold = _gold(companies={"Jeeves": "https://www.tryjeeves.com/", "Other": "https://www.linkedin.com/company/x"})
+    score = score_detection([{"name": "Tryjeeves", "website": "https://tryjeeves.com"},
+                             {"name": "Shared", "website": "https://www.linkedin.com/company/x"}], gold)
+    assert (score["correct"], score["wrong"], score["missed_names"]) == (1, 1, ["Other"])
+    assert (score["websites_right"], score["websites_checked"]) == (1, 1)
+
+
+def test_the_funds_name_in_front_of_a_name_does_not_count():
+    gold = _gold(companies={"GOintegro": None}, fund_name="Kaszek")
+    assert score_detection([{"name": "Kaszek GOintegro"}], gold)["correct"] == 1

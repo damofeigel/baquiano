@@ -58,8 +58,10 @@ class OneToolCallPerTurn(Model):
 
     def __init__(self, inner: Model) -> None:
         self.inner = inner
+        self.calls = 0      # also counts calls that fail: a failed run doesn't report its turns
 
     async def get_response(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        self.calls += 1
         response = await self.inner.get_response(*args, **kwargs)
         output, seen_call, dropped, renamed = [], False, [], False
         for item in response.output:

@@ -39,7 +39,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core.matching import (  # noqa: E402
-    dedupe_key, looks_like_category, name_from_website, normalize_country, not_a_company, registrable_domain,
+    dedupe_key, domain_as_name, looks_like_category, name_from_website, normalize_country, not_a_company, registrable_domain,
     same_company_name, sister_of, surely_category, tag_and_country, website_confirms_name, website_domain,
     without_domain_ending,
 )
@@ -151,6 +151,8 @@ def clean_startup(startup: dict, fund_domains: set[str] | None = None,
     elif not looks_like_category(name, startup.get("sector")):
         return startup, note
     better = name_from_website(startup.get("website"), fund_domains)
+    if not better and (label or surely_category(name)):       # ng.cash: too short for a name of its own
+        better = domain_as_name(startup.get("website"), fund_domains)
     if not label and website_confirms_name(name, better):
         return startup, note                     # the website is named after it: a real name
     if not better:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.core.matching import (
+    domain_as_name,
     not_a_company,
     same_company_name,
     tag_and_country,
@@ -223,3 +224,10 @@ def test_domain_endings_do_not_split_a_company(a, b, same):
 
 def test_name_from_a_brazilian_ai_domain():
     assert name_from_website("https://credito.aro.ia.br/") == "Aro"
+
+
+def test_a_short_domain_gives_a_name_only_as_the_whole_domain():
+    assert name_from_website("https://ng.cash/") is None
+    assert domain_as_name("https://ng.cash/") == "Ng.cash"
+    assert domain_as_name("https://ng.cash/", {"ng.cash"}) is None
+    assert domain_as_name("https://www.linkedin.com/company/x") is None

@@ -21,7 +21,8 @@ PROJECT_ROOT = EVALUATION_DIR.parent
 sys.path[:0] = [str(PROJECT_ROOT), str(PROJECT_ROOT / "scripts")]
 
 from src.core import config  # noqa: E402
-from src.core.matching import dedupe_key, same_company_name, website_domain  # noqa: E402
+from merge_portfolios import _without_fund_name  # noqa: E402
+from src.core.matching import company_domain, dedupe_key, same_company_name, website_domain  # noqa: E402
 
 DATASETS = EVALUATION_DIR / "datasets"
 DETECTION_DIR = DATASETS / "detection"
@@ -138,6 +139,7 @@ class Gold:
     """A fund's answer key. "?" rows aren't decided yet and count neither way."""
     fund: str
     reviewed: bool
+    fund_name: str | None = None         # removed from the front of found names ("Kaszek GOintegro")
     companies: dict[str, str | None] = field(default_factory=dict)    # name -> website
     not_companies: set[str] = field(default_factory=set)
     undecided: set[str] = field(default_factory=set)
@@ -145,7 +147,7 @@ class Gold:
 
 def load_gold(fund_dir: Path) -> Gold:
     meta = json.loads((fund_dir / "meta.json").read_text(encoding="utf-8"))
-    gold = Gold(fund=fund_dir.name, reviewed=bool(meta.get("reviewed")))
+    gold = Gold(fund=fund_dir.name, reviewed=bool(meta.get("reviewed")), fund_name=meta.get("fund_name"))
     with (fund_dir / "gold.csv").open(encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):
             keep = (row.get("keep") or "?").strip().lower()
@@ -166,6 +168,16 @@ def _find(name: str, names: Any) -> str | None:
     return next((n for n in names if same_name(name, n)), None)
 
 
+def _find_company(company: dict[str, Any], name: str, gold: Gold) -> str | None:
+    """The key's company by name, else by the company's own website: a key can use the real
+    name ("Jeeves") where a run could only name it from its domain ("Tryjeeves")."""
+    match = _find(name, gold.companies)
+    domain = company_domain(company.get("website"))
+    if match or not domain:
+        return match
+    return next((n for n, site in gold.companies.items() if company_domain(site) == domain), None)
+
+
 def score_detection(found: list[dict[str, Any]], gold: Gold) -> dict[str, Any]:
     """Compare what a run found with the answer key. A found name that is in no row of the
     key is an error: the key lists what's on the page."""
@@ -173,8 +185,8 @@ def score_detection(found: list[dict[str, Any]], gold: Gold) -> dict[str, Any]:
     wrong: list[str] = []
     sites_right = sites_checked = undecided = 0
     for company in found:
-        name = company["name"]
-        match = _find(name, gold.companies)
+        name = _without_fund_name(company["name"], gold.fund_name) or company["name"]
+        match = _find_company(company, name, gold)
         if match:
             if match not in correct and gold.companies[match]:
                 sites_checked += 1

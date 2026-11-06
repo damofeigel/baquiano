@@ -18,7 +18,8 @@ from bs4 import BeautifulSoup, Tag
 
 from src.core.browser import remove_consent_dialogs
 from src.core.matching import (
-    COUNTRY_NAMES, dedupe_key, looks_like_category, name_from_website, not_a_company, tag_and_country, website_domain,
+    COUNTRY_NAMES, dedupe_key, domain_as_name, looks_like_category, name_from_website, not_a_company, tag_and_country,
+    website_domain,
 )
 
 from .models import StartupInfo
@@ -508,7 +509,8 @@ def extract_companies(html: str, base_url: str) -> list[StartupInfo]:
             # has many "SaaS, Brazil"), so name it before looking for duplicates
             sector = country = None
             label = tag_and_country(name)
-            if website and (label or looks_like_category(name)) and (better := name_from_website(website)):
+            if website and (label or looks_like_category(name)) and (
+                    better := name_from_website(website) or domain_as_name(website)):
                 sector, country = label or (name, None)
                 name = better
             if name.lower() in seen:

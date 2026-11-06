@@ -47,6 +47,12 @@ LENGTH_NOTE = (
     "Your last reply was too long and was cut off before any tool call could "
     "be read. Reply with exactly ONE tool call. {saved_names} Continue from there."
 )
+SERVER_ERROR_NOTE = (
+    "The server could not read your last reply, so it was lost. {saved_names} "
+    "Continue with what is missing, using exactly ONE short tool call: at most 10 "
+    "companies per record_companies call, one short sentence per description. "
+    "If nothing is missing, call finish."
+)
 # Needed for gpt-oss-20b
 TEXT_REPLY_NOTE = (
     "You replied with text instead of a tool call. Only tool calls are saved. "
@@ -156,6 +162,7 @@ class PortfolioAgent:
         if mode not in MODES:
             raise ValueError(f"Unknown mode {mode!r}; expected one of {MODES}")
         self.recorder.reset()
+        self.model.calls = 0
         self.recorder.site_url = url
         self._prepass_found = 0
         self.browser_tools.evidence.reset()
@@ -230,6 +237,18 @@ class PortfolioAgent:
                 ]
                 note = LENGTH_NOTE.format(saved_names=self.recorder.saved_names_note())
                 run_input = history + [{"role": "user", "content": note}]
+                continue
+            except openai.InternalServerError as exc:
+                # gpt-oss writes a malformed or cut-off tool call and the server answers 500
+                # (vLLM: "unexpected tokens", llama.cpp: "peg-native format", "Failed to parse
+                # tool call"). Same reply on every retry of that request, so ask differently.
+                # The error carries no history: start over from the task and what was saved.
+                turns_left = min(turns_left - 1, max_turns - self.model.calls)
+                logger.warning("Server could not read a reply (%s); %d turns left", exc, turns_left)
+                if turns_left <= 0:
+                    break
+                note = SERVER_ERROR_NOTE.format(saved_names=self.recorder.saved_names_note())
+                run_input = [{"role": "user", "content": prompt}, {"role": "user", "content": note}]
                 continue
             except (AgentsException, openai.APIError) as exc:
                 if not self.recorder.companies:

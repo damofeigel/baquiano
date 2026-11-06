@@ -543,3 +543,9 @@ def test_visiting_company_pages_stops_when_the_site_keeps_failing():
     companies = [StartupInfo(name=f"C{n}", profile_url=f"https://f.example/c{n}") for n in range(40)]
     assert prepass.fill_websites_from_profiles(browser, companies, notes) == 0
     assert browser.visits == prepass.MAX_PROFILE_FAILURES and "failures in a row" in notes[0]
+
+
+def test_a_tag_card_with_a_short_domain_is_named_from_the_whole_domain():
+    cards = "".join(f'<div class="c"><a href="https://{d}/"><img alt=""><p>FinTech, Brazil</p></a></div>'
+                    for d in ["ng.cash", "hedix.com.br", "neofin.com.br", "aqmen.ai"])
+    assert "Ng.cash" in {c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)}

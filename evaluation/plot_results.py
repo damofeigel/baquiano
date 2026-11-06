@@ -29,18 +29,25 @@ DRAFT_NOTE = "DRAFT LABELS: not checked by a person yet, so these scores can't b
 
 # Today's answer keys: labels corrected after a run count without running it again
 
+def latest_only(rows: list[dict[str, Any]], *keys: str) -> list[dict[str, Any]]:
+    """The newest row per test: a failed test that ran again counts once, as its last try."""
+    return list({tuple(row.get(key) for key in keys): row for row in rows}.values())
+
+
 def rescore_detection(rows: list[dict[str, Any]], detection_dir: Path = DETECTION_DIR) -> list[dict[str, Any]]:
+    """A failed test scores as finding nothing: leaving it out would hide what it missed."""
     updated = []
-    for row in rows:
-        if "found" in row and (detection_dir / row["fund"] / "gold.csv").exists():
+    for row in latest_only(rows, "setting", "fund", "repeat"):
+        if (detection_dir / row["fund"] / "gold.csv").exists():
             gold = load_gold(detection_dir / row["fund"])
-            row = {**row, **score_detection(row["found"], gold), "reviewed": gold.reviewed}
+            row = {**row, **score_detection(row.get("found", []), gold), "reviewed": gold.reviewed}
         updated.append(row)
     return updated
 
 
 def relabel_matching(rows: list[dict[str, Any]], pairs_file: Path = PAIRS_FILE) -> list[dict[str, Any]]:
     """The labels in the file now. A pair whose label was removed no longer counts."""
+    rows = latest_only(rows, "setting", "pair_id")
     if not pairs_file.exists():
         return rows
     with pairs_file.open(encoding="utf-8", newline="") as f:
@@ -58,13 +65,13 @@ def summarize_detection(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         by_setting[row["setting"]].append(row)
     summary = []
     for setting, group in by_setting.items():
-        ok = [r for r in group if "failed" not in r]
+        ok = [r for r in group if "correct" in r]
         correct, wrong, missed = (sum(r[key] for r in ok) for key in ("correct", "wrong", "missed"))
         precision, recall, f1 = rates(correct, wrong, missed)
         checked = sum(r["websites_checked"] for r in ok)
         summary.append({
             "setting": setting, "model": group[0].get("model") or "none", "tests": len(group),
-            "failed": len(group) - len(ok), "correct": correct, "wrong": wrong, "missed": missed,
+            "failed": sum("failed" in r for r in group), "correct": correct, "wrong": wrong, "missed": missed,
             "undecided": sum(r["undecided"] for r in ok), "precision": precision, "recall": recall, "f1": f1,
             "website_accuracy": sum(r["websites_right"] for r in ok) / checked if checked else None,
             "seconds_per_fund": mean(r["seconds"] for r in group),
@@ -222,7 +229,7 @@ def by_fund(plt: Any, path: Path, rows: list[dict[str, Any]], draft: bool) -> No
     for fund in funds:
         line = []
         for setting in settings:
-            group = [r for r in rows if r["fund"] == fund and r["setting"] == setting and "failed" not in r]
+            group = [r for r in rows if r["fund"] == fund and r["setting"] == setting and "correct" in r]
             f1 = rates(*(sum(r[key] for r in group) for key in ("correct", "wrong", "missed")))[2] if group else None
             line.append(f1)
         grid.append(line)

@@ -316,3 +316,9 @@ def test_a_tag_with_a_country_gives_the_sector_and_country():
 def test_records_that_are_no_company_are_dropped(name, fund):
     cleaned, note = mp.clean_startup({"name": name}, None, fund)
     assert cleaned is None and note.startswith("dropped")
+
+
+def test_a_tag_card_with_a_short_domain_keeps_the_company():
+    cleaned, _ = mp.clean_startup({"name": "FinTech, Brazil", "website": "https://ng.cash/"})
+    assert (cleaned["name"], cleaned["country"]) == ("Ng.cash", "Brazil")
+    assert mp.clean_startup({"name": "FinTech, Brazil", "website": "https://ng.cash/"}, {"ng.cash"})[0] is None

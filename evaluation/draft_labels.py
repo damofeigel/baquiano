@@ -49,6 +49,7 @@ def _last_run_output(fund_id: str, url: str) -> list[dict]:
 
 
 def draft_detection(force: bool) -> None:
+    from merge_portfolios import _without_fund_name
     from src.custom_agents.portfolio_agent.heuristics import extract_companies
 
     for fund_dir in sorted(p for p in DETECTION_DIR.iterdir() if (p / "meta.json").exists()):
@@ -58,7 +59,8 @@ def draft_detection(force: bool) -> None:
             continue
         meta = json.loads((fund_dir / "meta.json").read_text(encoding="utf-8"))
         html = (fund_dir / "pages" / "portfolio.html").read_text(encoding="utf-8")
-        rows: list[dict] = [{"name": c.name, "website": c.website or "", "found_by": "parser"}
+        rows: list[dict] = [{"name": _without_fund_name(c.name, meta.get("fund_name")) or c.name,
+                             "website": c.website or "", "found_by": "parser"}
                             for c in extract_companies(html, meta["url"])]
         text = re.sub(r"\s+", " ", html).casefold()
         for company in _last_run_output(fund_dir.name, meta["url"]):

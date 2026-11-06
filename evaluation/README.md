@@ -19,7 +19,8 @@ The drafts come from the system under test, so they can't count as the truth unt
 
 **Detection:** in each `datasets/detection/<fund>/gold.csv`, compare the rows with
 `pages/portfolio.html`:
-- set `keep` to `yes` or `no` (`?` rows count neither way);
+- set `keep` to `yes` or `no` (`?` rows count neither way). A company counts by its name or its
+  website, so you can write the real name (`Jeeves`) where a run named it from its domain (`Tryjeeves`);
 - add any company the draft missed, with `keep` = `yes`: a missing company can't be counted as missed;
 - then set `"reviewed": true` in that fund's `meta.json`.
 
@@ -66,7 +67,9 @@ python evaluation/run_detection.py --repeats 3          # steadier times
 python evaluation/run_detection.py --setting "parser only" --fresh   # --fresh forgets ALL earlier detection results
 ```
 
-Correcting labels after a run needs no new run: `plot_results.py` scores against the answer keys
+A test that failed, such as a server error on one fund, runs again the next time you use the same
+command, and only its last try counts. If it still failed, it scores as finding nothing, since
+leaving it out would flatter that setting. Correcting labels after a run needs no new run: `plot_results.py` scores against the answer keys
 as they are now. Only a pair that had no label when the run happened has to be run.
 
 ### 4. Graph

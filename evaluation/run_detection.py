@@ -49,7 +49,8 @@ def replay_saved_pages(browser: Any, fund_dir: Path, pages: dict[str, str]) -> N
     browser.page.context.route("**/*", handle)
 
 
-async def run_agent(setting: dict[str, Any], fund_dir: Path, meta: dict[str, Any], usage: Usage) -> list[dict[str, Any]]:
+async def run_agent(setting: dict[str, Any], fund_dir: Path, meta: dict[str, Any],
+                    usage: Usage) -> tuple[list[dict[str, Any]], list[str], str]:
     from dataclasses import replace
 
     from src.custom_agents.portfolio_agent.agent import PortfolioAgent
@@ -63,7 +64,7 @@ async def run_agent(setting: dict[str, Any], fund_dir: Path, meta: dict[str, Any
             result = await agent.run(meta["url"], max_turns=setting.get("max_turns", 25), mode=setting["mode"])
         finally:
             await agent.client.close()
-    return [company.model_dump() for company in result.startups], result.errors
+    return [company.model_dump() for company in result.startups], result.errors, result.fund_name
 
 
 def clean_found(found: list[dict[str, Any]], fund_url: str, fund_name: str | None) -> list[dict[str, Any]]:
@@ -87,8 +88,8 @@ def run_one(setting: dict[str, Any], fund_dir: Path, repeat: int) -> dict[str, A
                            "model": config.VLLM_MODEL if uses_model(setting) else None,
                            "reviewed": gold.reviewed, "params": {k: v for k, v in setting.items() if k != "api_key"}}
     try:
-        found, errors = asyncio.run(run_agent(setting, fund_dir, meta, usage))
-        cleaned = clean_found(found, meta["url"], None)
+        found, errors, fund_name = asyncio.run(run_agent(setting, fund_dir, meta, usage))
+        cleaned = clean_found(found, meta["url"], fund_name)
         row["found"] = [{"name": c["name"], "website": c.get("website")} for c in cleaned]
         row.update(score_detection(row["found"], gold))
         row["errors"] = errors
