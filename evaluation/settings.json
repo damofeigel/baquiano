@@ -4,7 +4,8 @@
     {"name": "parser + model, default", "mode": "hybrid"},
     {"name": "parser + model, temp 0.2", "mode": "hybrid", "temperature": 0.2},
     {"name": "parser + model, low reasoning", "mode": "hybrid", "extra_body": {"reasoning_effort": "low"}},
-    {"name": "model only, default", "mode": "agent"}
+    {"name": "model only, default", "mode": "agent"},
+    {"name": "llama.cpp, parser + model", "mode": "hybrid", "base_url": "http://localhost:8001/v1", "model": "<name from curl>"}
   ],
   "matching": [
     {"name": "rules only"},
