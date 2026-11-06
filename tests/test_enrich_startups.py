@@ -306,7 +306,7 @@ def test_old_results_get_hints_once_when_loaded(tmp_path, monkeypatch):
     old = _previous(tmp_path, [{"name": "Nova", "enrichment": {"country": None, "argentina_signals": ["phone +54"]}}])
     calls = []
     real = es.add_hints
-    monkeypatch.setattr(es, "add_hints", lambda e: calls.append(1) or real(e))
+    monkeypatch.setattr(es, "add_hints", lambda e, *rest: calls.append(1) or real(e, *rest))
     monkeypatch.setattr(sys, "argv", ["enrich_startups.py", str(merged), "--out", str(out),
                                       "--previous", str(old), "--limit", "0"])
     es.main()
@@ -372,3 +372,78 @@ def test_a_redirect_to_an_ar_site_counts(monkeypatch):
                                FakeBrowser({"https://neworgans.com": home}), lambda messages, schema: {}, TAXONOMY)
     assert enrichment["argentina_signals"] == [".ar domain"] and enrichment["country_likely"] == "Argentina"
     assert enrichment["pages_read"] == ["https://www.neworgans.com.ar/"]
+
+
+def _must_not_run(*_):
+    raise AssertionError("the model must not be asked")
+
+
+def test_nothing_to_read_stays_unknown_without_asking_the_model():
+    result = es.enrich_one({"name": "Mystery"}, None, _must_not_run, TAXONOMY)
+    assert result["deep_tech"] is None and result["tech_area"] == "unknown" and result["website_status"] == "no website"
+    assert es.summarize([{"enrichment": result}])["deep_tech_unknown"] == 1
+
+
+def test_stored_results_with_nothing_to_read_become_unknown():
+    entry = {"name": "1", "enrichment": {"deep_tech": False, "tech_area": "other", "summary": "No information available",
+                                          "website_status": "no website", "pages_read": []}}
+    es.update_stored(entry)
+    assert entry["enrichment"]["deep_tech"] is None and entry["enrichment"]["summary"] is None
+    with_text = {"name": "A", "descriptions": [{"fund": "F", "text": "Biotech"}],
+                 "enrichment": {"deep_tech": False, "website_status": "no website", "pages_read": []}}
+    es.update_stored(with_text)
+    assert with_text["enrichment"]["deep_tech"] is False
+
+
+def test_an_old_result_is_redone_when_there_is_now_a_website(tmp_path):
+    old = _previous(tmp_path, [{"name": "Acme", "enrichment": {"deep_tech": False, "website_status": "no website"}}])
+    done = {}
+    assert es.reuse_previous([{"name": "Acme", "website": "https://acme.com"}], [old], done) == 0
+    assert es.reuse_previous([{"name": "Acme"}], [old], done) == 1
+
+
+@pytest.mark.parametrize("sources, expected", [
+    (["https://corlab.cordoba.gob.ar/startup-cordoba-monitor/"], True),
+    (["http://www.ptlc.org.ar/empresas/"], True),
+    (["https://sf500.vc/portfolio/"], True),
+    (["https://500.co/portfolio"], False),
+    (None, False),
+])
+def test_argentine_programmes_are_a_signal(sources, expected):
+    signals = es.argentina_signals(None, [], None, sources)
+    assert (es.PROGRAMME_SIGNAL in signals) is expected
+    assert (es.add_hints({"country": None, "argentina_signals": signals})["country_likely"] == "Argentina") is expected
+
+
+def test_country_likely_uses_the_country_a_fund_states():
+    assert es.add_hints({"country": None, "argentina_signals": []}, "argentina")["country_likely"] == "Argentina"
+    assert es.add_hints({"country": "Chile", "argentina_signals": []}, "Argentina")["country_likely"] == "Chile"
+
+
+@pytest.mark.parametrize("evidence, dropped", [
+    ("Córdoba", True), ('"Rosario"', True), ('"Head of Sales Argentina"', True), ("Forbes Argentina", True),
+    ("Córdoba, Argentina", False), ("Founded in Rosario, Argentina", False), ("Argentina", False), ("+54 9 11 2662", False),
+])
+def test_weak_country_evidence(evidence, dropped):
+    result = es.recheck_country({"country": "Argentina", "country_evidence": evidence, "checks": []})
+    assert (result["country"] is None) is dropped
+    assert bool(result["checks"]) is dropped
+
+
+def test_classifier_tries_an_empty_reply_again():
+    from src.core.structured_llm import make_llm_classifier
+
+    class Client:
+        replies = iter(["", '{"ok": true}'])
+        temperatures = []
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kwargs):
+                    Client.temperatures.append(kwargs["temperature"])
+                    message = type("M", (), {"content": next(Client.replies)})
+                    return type("R", (), {"choices": [type("C", (), {"message": message})]})
+
+    assert make_llm_classifier(Client, "m")([], {}) == {"ok": True}
+    assert Client.temperatures == [0, 0.3]

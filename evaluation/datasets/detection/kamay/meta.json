@@ -1,0 +1,10 @@
+{
+  "id": "kamay",
+  "url": "https://kamayventures.com/",
+  "why": "The list is on the homepage; /portfolio asks for a key",
+  "pages": {
+    "kamayventures.com": "portfolio.html"
+  },
+  "reviewed": false,
+  "saved_at": "2026-11-06T20:59:12+00:00"
+}

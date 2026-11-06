@@ -1,0 +1,16 @@
+[
+  {"id": "500global", "url": "https://500.co/portfolio", "why": "Filter panel next to the real cards"},
+  {"id": "sosv", "url": "https://sosv.com/portfolio/", "why": "Filter panel, popup over the page"},
+  {"id": "antler", "url": "https://www.antler.co/portfolio", "why": "List inside a form, photo captions"},
+  {"id": "cites", "url": "https://cites-gss.com/en/portfolio/", "why": "Filter tabs, descriptions as headings"},
+  {"id": "17sigma", "url": "https://17sigma.com/", "why": "Cards show only a tag and a logo"},
+  {"id": "kaszek", "url": "https://kaszek.com/companies/", "why": "Logos with no names in the text"},
+  {"id": "gridexponential", "url": "https://www.gridexponential.com/portfolio", "why": "Argentine deep tech, a clean grid"},
+  {"id": "kamay", "url": "https://kamayventures.com/", "why": "The list is on the homepage; /portfolio asks for a key"},
+  {"id": "nxtp", "url": "https://nxtp.vc/portfolio", "why": "The parser found only navigation"},
+  {"id": "drapercygnus", "url": "https://www.drapercygnus.vc/portfolio", "why": "The parser found only navigation"},
+  {"id": "aceleradoralitoral", "url": "https://www.aceleradoralitoral.com.ar/portfolio/", "why": "The parser found nothing here"},
+  {"id": "ptlc", "url": "http://www.ptlc.org.ar/empresas/", "why": "Argentine programme, institutions mixed in"},
+  {"id": "ycombinator", "url": "https://www.ycombinator.com/companies", "why": "A long list, no websites on the cards"},
+  {"id": "embarca", "url": "https://www.embarca.tech/", "why": "No portfolio at all: the right answer is nothing"}
+]

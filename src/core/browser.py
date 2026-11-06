@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString
 from src.core import config
@@ -63,6 +64,16 @@ browser_config = BrowserConfig()
 LOAD_MORE_RE = re.compile(
     r"\b(load|show|see|view)\s+more\b|\b(ver|cargar|mostrar)\s+m[aá]s\b", re.I
 )
+NEXT_PAGE_RE = re.compile(r"^\s*(next|siguiente)\s*[›»>]?\s*$", re.I)
+
+
+def _click(element: Any) -> None:
+    """Click, or send the click straight to the element when something covers it
+    (sosv.com's newsletter popup sits over its "Load more" button)."""
+    try:
+        element.click(timeout=3_000)
+    except PlaywrightTimeoutError:
+        element.dispatch_event("click")
 
 
 # Core extraction helpers
@@ -195,6 +206,8 @@ def extract_page_content(
 
     # 3. Preserve SVG aria-label or title before decomposing
     for svg in soup.find_all("svg"):
+        if svg.decomposed:  # an svg nested in one already removed
+            continue
         label_value = (svg.get("aria-label") or svg.get("title") or "")
         if not isinstance(label_value, str):
             continue
@@ -518,27 +531,39 @@ class BrowserManager:
     def expand_listing(
         self,
         page: Page | None = None,
-        max_scrolls: int = 10,
-        max_clicks: int = 5,
+        max_scrolls: int = 300,
+        max_clicks: int = 300,
         pause_ms: int = 800,
     ) -> dict[str, Any]:
-        """Scroll until the page stops growing, then click 'load more' buttons.
+        """Scroll until the page stops growing, then click 'load more' buttons
+        until they stop adding anything. The limits only guard against a page that
+        never ends; "limit_hit" says when one was reached (the list may be incomplete).
 
         Only <button>/role=button elements are clicked: "Ver más" links on
         individual cards usually open a company profile instead.
         """
         target_page = page or self.page
         height = "() => document.body ? document.body.scrollHeight : 0"
+        # Links and images, not all elements: a card's "Show more" only unfolds its own text
+        cards = "() => document.links.length + document.images.length"
+        limit_hit = False
 
         def scroll_to_end() -> int:
+            nonlocal limit_hit
             done = 0
+            stalled = False
             for _ in range(max_scrolls):
                 before = target_page.evaluate(height)
                 target_page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
                 target_page.wait_for_timeout(pause_ms)
                 done += 1
-                if target_page.evaluate(height) == before:
-                    break
+                if target_page.evaluate(height) != before:
+                    stalled = False
+                elif stalled:           # twice in a row: a slow page gets a second chance
+                    return done
+                else:
+                    stalled = True
+            limit_hit = True
             return done
 
         scrolls = scroll_to_end()
@@ -546,16 +571,38 @@ class BrowserManager:
         start_url = target_page.url
         for _ in range(max_clicks):
             button = target_page.get_by_role("button", name=LOAD_MORE_RE).first
+            before = target_page.evaluate(cards)
             try:
                 if button.count() == 0 or not button.is_visible():
                     break
-                button.click(timeout=3_000)
+                _click(button)
             except Exception:
                 break
             target_page.wait_for_timeout(pause_ms)
             if target_page.url != start_url:
                 target_page.go_back(timeout=self.config.timeout_ms)
                 break
-            clicks += 1
             scrolls += scroll_to_end()
-        return {"scrolls": scrolls, "clicks": clicks}
+            if target_page.evaluate(cards) == before:
+                break                   # the button is still there but loads nothing
+            clicks += 1
+        else:
+            limit_hit = True
+        return {"scrolls": scrolls, "clicks": clicks, "limit_hit": limit_hit}
+
+    def click_next_page(self, page: Page | None = None, pause_ms: int = 1_200) -> bool:
+        """Click a "Next" control that has no link to follow (a script swaps the list in place).
+        True if the page's text changed; False when there is none, it is disabled or nothing moved."""
+        target_page = page or self.page
+        control = target_page.locator(
+            '[aria-label*="next page" i]:not([href]), a:not([href]), button'
+        ).filter(has_text=NEXT_PAGE_RE).first
+        try:
+            if control.count() == 0 or not control.is_visible() or control.is_disabled():
+                return False
+            before = target_page.inner_text("body")
+            _click(control)
+            target_page.wait_for_timeout(pause_ms)
+            return target_page.inner_text("body") != before
+        except Exception:
+            return False

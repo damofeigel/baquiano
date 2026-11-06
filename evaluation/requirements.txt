@@ -1,0 +1,2 @@
+# Only for plot_results.py; the project's own requirements.txt covers the rest
+matplotlib>=3.8

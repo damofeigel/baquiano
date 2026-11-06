@@ -31,6 +31,7 @@ class StartupInfo(BaseModel):
 
     # Provenance (optional on item level, automatically filled by FinderResult)
     source_url: Optional[str] = None      # → sources.url (fund portfolio page)
+    profile_url: Optional[str] = None     # the fund's own page about the company, when its website isn't on the card
     fund_name: Optional[str] = None       # → actor name of the investor
 
     @field_validator(

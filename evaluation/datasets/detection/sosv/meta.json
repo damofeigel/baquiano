@@ -1,0 +1,11 @@
+{
+  "id": "sosv",
+  "url": "https://sosv.com/portfolio/",
+  "why": "Filter panel, popup over the page",
+  "pages": {
+    "sosv.com/portfolio": "portfolio.html",
+    "sosv.com": "home.html"
+  },
+  "reviewed": false,
+  "saved_at": "2026-11-06T20:56:22+00:00"
+}

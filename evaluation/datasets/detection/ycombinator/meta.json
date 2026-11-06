@@ -1,0 +1,11 @@
+{
+  "id": "ycombinator",
+  "url": "https://www.ycombinator.com/companies",
+  "why": "A long list, no websites on the cards",
+  "pages": {
+    "ycombinator.com/companies": "portfolio.html",
+    "ycombinator.com": "home.html"
+  },
+  "reviewed": false,
+  "saved_at": "2026-11-06T20:58:25+00:00"
+}

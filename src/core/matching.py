@@ -11,14 +11,28 @@ import unicodedata
 from urllib.parse import urlsplit
 
 
+# A domain written as a name: "Nuvemshop.com.br", "Exactly.finance", "Mural.co"
+_NAME_DOMAIN_ENDING = re.compile(
+    r"^(.*?\w)\.(com?|net|org|io|ai|app|bio|tech|finance|ar|br|mx|cl|uy)(\.[a-z]{2})?$", re.IGNORECASE
+)
+
+
+def without_domain_ending(name: str) -> str:
+    """"Nuvemshop.com.br" -> "Nuvemshop". Other names stay as they are."""
+    match = _NAME_DOMAIN_ENDING.match(name.strip())
+    return match.group(1) if match else name
+
+
 def same_company_name(a: str, b: str) -> bool:
     """Name variants of one company, e.g. from a fund's regional sites:
-    "Heartbest" / "Heartbest Foods", "Botanical Solution" / "Botanical Solutions".
+    "Heartbest" / "Heartbest Foods", "Botanical Solution" / "Botanical Solutions",
+    or with a domain ending from another fund: "Exactly" / "Exactly.finance".
 
     The longer name must be the shorter plus whole extra words (no digits, so
     "Startup 1" / "Startup 10" and "Glaia" / "Glaia 2" stay apart), and the
     shorter needs 6+ characters so short names ("Agree" / "Agreena") stay apart.
     """
+    a, b = without_domain_ending(a), without_domain_ending(b)
     (short_key, short), (long_key, long) = sorted(
         ((dedupe_key(a), a), (dedupe_key(b), b)), key=lambda pair: len(pair[0])
     )
@@ -95,6 +109,19 @@ def website_domain(url: str | None) -> str | None:
     return host if host and not re.search(r"[\s\[\]@:]", host) else None   # no IPv6 literal either
 
 
+# Countries a portfolio card may show (lowercase)
+COUNTRY_NAMES = {
+    "argentina", "brazil", "brasil", "chile", "colombia", "mexico", "méxico", "peru", "perú",
+    "uruguay", "paraguay", "bolivia", "ecuador", "venezuela", "costa rica", "panama", "panamá",
+    "guatemala", "honduras", "el salvador", "nicaragua", "dominican republic", "república dominicana",
+    "puerto rico", "cuba", "usa", "us", "united states", "estados unidos", "canada", "spain", "españa",
+    "portugal", "united kingdom", "uk", "france", "germany", "italy", "netherlands", "israel",
+    "india", "singapore", "australia", "new zealand", "latam", "latin america",
+    "ireland", "denmark", "sweden", "norway", "finland", "belgium", "switzerland", "austria",
+    "poland", "indonesia", "malaysia", "myanmar", "thailand", "vietnam", "philippines",
+    "japan", "china", "south korea", "kenya", "nigeria", "south africa", "egypt",
+}
+
 # Names that are not company names
 
 # Sector tags and card badges a portfolio page shows next to (or instead of) a name.
@@ -106,8 +133,13 @@ TAG_WORDS = {
     "medtech", "edtech", "hrtech", "proptech", "insurtech", "legaltech", "cleantech", "climatetech", "deeptech",
     "web3", "blockchain", "b2b", "b2c", "iot", "exit", "exited", "acquired", "ipo", "portfolio", "startup",
     "startups",
+    # CITES's filter tabs: "Pharma", "Biotechnology", "Drug Discovery", "Med devices", "Mining and Energy"
+    "pharma", "biotechnology", "drug", "med", "mining", "cities",
 }
-ORDINARY_WORDS = {"crypto", "energy", "mobility", "logistics", "marketplace", "other", "others", "all", "and"}
+ORDINARY_WORDS = {
+    "crypto", "energy", "mobility", "logistics", "marketplace", "other", "others", "all", "and",
+    "discovery", "devices", "diagnostic", "implants", "smart", "robots", "food",
+}
 CATEGORY_WORDS = TAG_WORDS | ORDINARY_WORDS
 # Shared platforms: a link to one of these doesn't identify a company
 GENERIC_SITES = {
@@ -148,6 +180,35 @@ def looks_like_category(name: str, sector: str | None = None) -> bool:
     return all(word in CATEGORY_WORDS for word in words)
 
 
+def tag_and_country(name: str) -> tuple[str, str] | None:
+    """(tag, country) for a card's label read as the name: "AI & SaaS, Argentina" ->
+    ("AI & SaaS", "Argentina"). None for anything else, like "Acme, Argentina"."""
+    tag, sep, country = name.rpartition(",")
+    if not sep or country.strip().casefold() not in COUNTRY_NAMES or not looks_like_category(tag):
+        return None
+    return tag.strip(), country.strip()
+
+
+# A photo's alt text read as a name: "peec ai team photo", "Two founders posing for photo in Europe"
+_CAPTION = re.compile(r"\b(team photo|founders? (posing|on)\b|photo of)|\bphoto$|\bfounders$", re.IGNORECASE)
+_MONTHS = ("enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
+           "january|february|march|april|june|july|august|september|october|november|december")
+# An event's date read as a name: "30 y 31 de julio de 2026 · Córdoba, Argentina"
+_EVENT_DATE = re.compile(rf"\b\d{{1,2}}\s+(de\s+|of\s+)?({_MONTHS})\b", re.IGNORECASE)
+
+
+def not_a_company(name: str) -> str | None:
+    """What NAME is when it is plainly no company (a photo caption, an event's date, a fund
+    partner's filter), else None."""
+    if _CAPTION.search(name):
+        return "a photo caption"
+    if _EVENT_DATE.search(name):
+        return "an event's date"
+    if name.strip().casefold().startswith("portfolio:"):
+        return "a filter label"
+    return None
+
+
 def surely_category(name: str) -> bool:
     """A category beyond doubt: category words with at least one tag word ("Exit FinTech",
     "AI & SaaS"). "Mobility", "Crypto Energy" or a name equal to its sector may be a
@@ -157,7 +218,7 @@ def surely_category(name: str) -> bool:
 
 
 # Second levels under a country code that are part of the suffix: puna.com.ar, acme.co.uk
-_SECOND_LEVELS = {"com", "co", "org", "net", "gob", "gov", "edu", "ac", "mil", "int", "nom", "ai", "io"}
+_SECOND_LEVELS = {"com", "co", "org", "net", "gob", "gov", "edu", "ac", "mil", "int", "nom", "ai", "io", "ia"}
 
 
 def registrable_domain(domain: str | None) -> str | None:

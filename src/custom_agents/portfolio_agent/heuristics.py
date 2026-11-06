@@ -17,13 +17,16 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, Tag
 
 from src.core.browser import remove_consent_dialogs
-from src.core.matching import website_domain
+from src.core.matching import (
+    COUNTRY_NAMES, dedupe_key, looks_like_category, name_from_website, not_a_company, tag_and_country, website_domain,
+)
 
 from .models import StartupInfo
 
 MIN_CARDS = 4
 MAX_NAME_CHARS = 60
 MAX_CARD_TEXT = 500      # median card text above this looks like page sections, not cards
+MAX_LINKED_CARD_TEXT = 2_000  # unless most link to their own site: 500.co's cards repeat a long text for mobile
 MAX_DESCRIPTION_CHARS = 300
 
 PORTFOLIO_KEYWORDS = (
@@ -42,7 +45,7 @@ SOCIAL_DOMAINS = (
 
 _GENERIC_NAMES = {
     "logo", "image", "imagen", "website", "web", "sitio web", "visit", "visitar",
-    "learn more", "read more", "see more", "view more", "more", "ver", "ver más",
+    "site", "learn more", "read more", "see more", "view more", "more", "ver", "ver más",
     "ver mas", "leer más", "más info", "mas info", "más información", "details",
     "detalles", "link", "home", "inicio", "portfolio", "portafolio",
     # status badges shown on cards instead of the name ("Exited" -> agribodytech.com)
@@ -55,6 +58,10 @@ _ROLE_RE = re.compile(
 )
 _LOGO_WORDS_RE = re.compile(r"\b(logo|logotipo|isologo|isotipo|image|imagen)\b", re.I)
 _NAV_SKIP = ["script", "style", "noscript", "nav", "header", "footer", "form", "svg"]
+# Search-and-filter widgets: a checkbox or radio per option, each with a label and a count
+_FILTER_CONTROLS = 'input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [class*="facet"]'
+MAX_FILTER_ROW_CHARS = 60
+_FILTER_ATTRIBUTE = re.compile(r"^data-.*(term|filter|facet|taxonomy)", re.I)
 
 
 # --- URL helpers ----------------------------------------------------------------
@@ -156,17 +163,7 @@ def find_sister_sites(html: str, base_url: str, limit: int = 6) -> list[str]:
 
 
 # Countries a card may show next to the name ("BemAgro | Brazil")
-_COUNTRIES = {
-    "argentina", "brazil", "brasil", "chile", "colombia", "mexico", "méxico", "peru", "perú",
-    "uruguay", "paraguay", "bolivia", "ecuador", "venezuela", "costa rica", "panama", "panamá",
-    "guatemala", "honduras", "el salvador", "nicaragua", "dominican republic", "república dominicana",
-    "puerto rico", "cuba", "usa", "us", "united states", "estados unidos", "canada", "spain", "españa",
-    "portugal", "united kingdom", "uk", "france", "germany", "italy", "netherlands", "israel",
-    "india", "singapore", "australia", "new zealand", "latam", "latin america",
-    "ireland", "denmark", "sweden", "norway", "finland", "belgium", "switzerland", "austria",
-    "poland", "indonesia", "malaysia", "myanmar", "thailand", "vietnam", "philippines",
-    "japan", "china", "south korea", "kenya", "nigeria", "south africa", "egypt",
-}
+_COUNTRIES = COUNTRY_NAMES
 # Regions/labels that look like countries in tag lists but aren't one
 _NOT_COUNTRIES = {"latam", "latin america"}
 
@@ -244,6 +241,11 @@ def _signature(el: Tag) -> tuple[str, str]:
     return el.name, " ".join(classes)
 
 
+# "Locations: United States" on a card, a country on its own only (not "Boston, MA")
+_LOCATION = re.compile(
+    r"\bLocations?:\s*(" + "|".join(sorted(map(re.escape, COUNTRY_NAMES), key=len, reverse=True)) + r")\b(?!\s*,)",
+    re.IGNORECASE,
+)
 _ALT_SEPARATOR = re.compile(r"\s[–—-]\s")
 # "Lara (exit to Visma)", "Dexer (formely AgVoice)": the note moves to the description
 _EXIT_NOTE = re.compile(
@@ -308,21 +310,31 @@ def _clean_name(text: str) -> str | None:
         text = re.sub(r"\.(png|jpe?g|svg|webp|gif)$", "", text, flags=re.I).replace("-", " ").replace("_", " ")
     text = _LOGO_WORDS_RE.sub("", text)
     text = re.sub(r"^\s*(de|of)\s+", "", text, flags=re.I).strip(" -–|:·")
-    if not text or len(text) > MAX_NAME_CHARS or text.lower() in _GENERIC_NAMES:
-        return None
+    if not re.search(r"\w", text) or len(text) > MAX_NAME_CHARS or text.lower() in _GENERIC_NAMES:
+        return None                 # "+", a sentence, "Website"
     if _LINK_LABEL.match(text) or _CONSENT.search(text):  # "Visit website", cookie banners
         return None
-    if text.lower().startswith(("http", "www.")):
+    if text.lower().startswith(("http", "www.")) or not_a_company(text):
         return None
     return text
 
 
-def _card_name(card: Tag) -> str | None:
+def _card_name(card: Tag, base_url: str = "") -> str | None:
     named = card.find(["h1", "h2", "h3", "h4", "h5", "h6"]) or card.find(
         class_=re.compile(r"(^|[-_])(name|title|nombre)([-_]|$)", re.I)
     )
     if named and (name := _clean_name(named.get_text(" ", strip=True))):
+        # A heading of 4+ words unrelated to the link's slug describes the company (cites-gss.com)
+        slug_name = _name_from_slug(card) if len(name.split()) >= 4 else None
+        if slug_name and not slug_name.isdigit() and dedupe_key(slug_name)[:4] not in dedupe_key(name):
+            return slug_name
         return name
+    # The text of the link to the company's site is its brand; a logo's alt may be
+    # the legal name (500.co: alt "DYNAMOID, INC." on a link reading "10k Science")
+    for a in ([card] if card.name == "a" else card.find_all("a", href=True)):
+        if (_is_external_company_link(str(a.get("href", "")), base_url)
+                and (name := _clean_name(a.get_text(" ", strip=True)))):
+            return name
     imgs = [card] if card.name == "img" else card.find_all("img")
     for img in imgs:
         alt, _ = _split_alt(str(img.get("alt") or img.get("title") or ""))
@@ -355,7 +367,7 @@ def _name_from_slug(card: Tag) -> str | None:
         segments = [seg for seg in urlparse(str(a.get("href", ""))).path.split("/") if seg]
         if not segments:
             continue
-        slug = segments[-1].lower()
+        slug = re.sub(r"-(\d+|en|es|pt)$", "", segments[-1].lower())   # "ab-astra-2", "clover-en"
         if slug in _SLUG_SKIP or not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", slug):
             continue
         key = slug.replace("-", "")
@@ -375,6 +387,19 @@ def _card_website(card: Tag, base_url: str) -> str | None:
     for a in links:
         href = urljoin(base_url, str(a.get("href", "")))
         if _is_external_company_link(href, base_url):
+            return href
+    return None
+
+
+def _card_profile(card: Tag, name: str, base_url: str) -> str | None:
+    """The card's link to the fund's own page about the company (/company/puna-bio/):
+    same site, with the company's name in the address."""
+    key = dedupe_key(name)
+    for a in ([card] if card.name == "a" else card.find_all("a", href=True)):
+        href = urljoin(base_url, str(a.get("href", "")))
+        path = urlparse(href).path.rstrip("/")
+        slug = dedupe_key(path.rsplit("/", 1)[-1])
+        if _same_site(href, base_url) and len(key) >= 3 and (key[:5] in slug or (slug and slug in key)):
             return href
     return None
 
@@ -408,11 +433,38 @@ def _looks_like_team(cards: list[Tag]) -> bool:
     return team_like > len(cards) / 2
 
 
+def _remove_filters(soup: BeautifulSoup) -> None:
+    """Remove the rows of search filters (in place). A long filter panel is the biggest repeated
+    group on many pages: 500.co has 297 options like "Lebanon 12", next to 10 real cards per
+    page. The whole row goes, label and count, up to where the text grows past a row's."""
+    chips = [a for a in soup.select('a[href="#"]')
+             if any(_FILTER_ATTRIBUTE.match(attr) for attr in a.attrs)
+             and "location" not in " ".join(str(v) for v in a.attrs.values())]  # a card's country (see _LOCATION)
+    for control in soup.select(_FILTER_CONTROLS) + chips:
+        if control.decomposed or len(control.get_text(" ", strip=True)) > MAX_FILTER_ROW_CHARS:
+            continue                    # already gone, or a wrapper ("facetwp-template" holds the whole grid)
+        row = control
+        while (
+            row.parent is not None and row.parent.name != "[document]"
+            and len(row.parent.get_text(" ", strip=True)) <= MAX_FILTER_ROW_CHARS
+        ):
+            row = row.parent
+        row.decompose()
+
+
+def _holds_listing(form: Tag) -> bool:
+    """A page-wide search form can wrap the whole grid (antler.co); a contact form has no cards."""
+    return len(form.find_all("img")) >= MIN_CARDS or len(form.find_all("a", href=True)) >= MIN_CARDS
+
+
 def extract_companies(html: str, base_url: str) -> list[StartupInfo]:
     """Return companies from the most portfolio-like repeated card group, or []."""
     soup = BeautifulSoup(html, "html.parser")
     remove_consent_dialogs(soup)
+    _remove_filters(soup)
     for tag in soup(_NAV_SKIP):
+        if tag.decomposed or (tag.name == "form" and _holds_listing(tag)):
+            continue
         tag.decompose()
 
     # Key by parent and child signature: category grids that share a layout
@@ -431,25 +483,44 @@ def extract_companies(html: str, base_url: str) -> list[StartupInfo]:
     for cards in groups.values():
         if len(cards) < MIN_CARDS:
             continue
-        if median(len(c.get_text(" ", strip=True)) for c in cards) > MAX_CARD_TEXT:
-            continue
+        text_size = median(len(c.get_text(" ", strip=True)) for c in cards)
+        if text_size > MAX_CARD_TEXT:
+            linked = sum(_card_website(c, base_url) is not None for c in cards)
+            if text_size > MAX_LINKED_CARD_TEXT or linked < 0.6 * len(cards):
+                continue
         if _looks_like_team(cards):
+            continue
+        # One or two per parent, in a row of such parents: the parts of a card (a logo row and
+        # a text block, or desktop and mobile copies), and the parents are the cards
+        parents = {id(c.parent) for c in cards}
+        if len(parents) >= MIN_CARDS and len(cards) <= 2 * len(parents):
             continue
 
         companies: list[StartupInfo] = []
         seen: set[str] = set()
         external = logos = 0
         for card in cards:
-            name = _card_name(card)
-            if not name or name.lower() in seen:
+            name = _card_name(card, base_url)
+            if not name:
+                continue
+            website = _card_website(card, base_url)
+            # The label is all the card says: only the link tells companies apart (17sigma.com
+            # has many "SaaS, Brazil"), so name it before looking for duplicates
+            sector = country = None
+            label = tag_and_country(name)
+            if website and (label or looks_like_category(name)) and (better := name_from_website(website)):
+                sector, country = label or (name, None)
+                name = better
+            if name.lower() in seen:
                 continue
             seen.add(name.lower())
-            website = _card_website(card, base_url)
             external += website is not None
             logos += card.name == "img" or card.find("img") is not None
-            name, country = split_country(name)
+            name, name_country = split_country(name)
             description = _card_description(card, name)
-            country = country or country_from_tags(description)
+            location = _LOCATION.search(card.get_text(" ", strip=True))
+            country = (country or name_country or country_from_tags(description)
+                       or (location.group(1).strip() if location else None))
             
             if exit_match := _EXIT_NOTE.match(name):
                 name = exit_match.group(1)
@@ -461,11 +532,15 @@ def extract_companies(html: str, base_url: str) -> list[StartupInfo]:
                 website=website,
                 description=description,
                 country=country,
+                sector=sector,
+                profile_url=None if website else _card_profile(card, name, base_url),
                 source_url=base_url,
             ))
 
         if len(companies) < MIN_CARDS or len(companies) / len(cards) < 0.6:
             continue
+        if sum(c.name.isdigit() for c in companies) > 0.3 * len(companies):
+            continue                    # the counts of a filter list, not names
         # Company grids usually have logos and/or links to company sites
         score = len(companies) * (1 + external / len(companies) + 0.5 * logos / len(companies))
         if external == 0 and logos == 0:

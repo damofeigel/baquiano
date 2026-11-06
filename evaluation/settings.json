@@ -1,0 +1,15 @@
+{
+  "detection": [
+    {"name": "parser only", "mode": "deterministic"},
+    {"name": "parser + model, default", "mode": "hybrid"},
+    {"name": "parser + model, temp 0.2", "mode": "hybrid", "temperature": 0.2},
+    {"name": "parser + model, low reasoning", "mode": "hybrid", "extra_body": {"reasoning_effort": "low"}},
+    {"name": "model only, default", "mode": "agent"}
+  ],
+  "matching": [
+    {"name": "rules only"},
+    {"name": "rules + model, default", "use_model": true},
+    {"name": "rules + model, temp 0.2", "use_model": true, "temperature": 0.2},
+    {"name": "rules + model, low reasoning", "use_model": true, "extra_body": {"reasoning_effort": "low"}}
+  ]
+}

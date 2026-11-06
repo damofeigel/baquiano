@@ -16,8 +16,11 @@ source page it came from; fields that disagree between funds are kept under
 
 Cleaning on the way in: a fund's regional sister site counts as the same fund
 (theyieldlablatam.com is The Yield Lab); a sector tag or badge recorded as a
-name ("AI & SaaS", "Exited") is renamed from the startup's website, or dropped
-when it has none; countries get one spelling ("USA" -> "United States").
+name ("AI & SaaS", "Exited", "SaaS, Argentina") is renamed from the startup's
+website, or dropped when it has none; a photo caption or an event's date is
+dropped; the fund's name in front of a name and a domain ending after it are
+removed ("Kaszek GOintegro", "Nuvemshop.com.br"); countries get one spelling
+("USA" -> "United States").
 
 Writes output/startups_merged_<time>.json and a .csv next to it.
 """
@@ -36,8 +39,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core.matching import (  # noqa: E402
-    dedupe_key, looks_like_category, name_from_website, normalize_country, registrable_domain, same_company_name,
-    sister_of, surely_category, website_confirms_name, website_domain,
+    dedupe_key, looks_like_category, name_from_website, normalize_country, not_a_company, registrable_domain,
+    same_company_name, sister_of, surely_category, tag_and_country, website_confirms_name, website_domain,
+    without_domain_ending,
 )
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -107,7 +111,17 @@ def fund_domains(path: Path, data: dict) -> set[str]:
                         registrable_domain(website_domain(data.get("source_url")))) if d}
 
 
-def clean_startup(startup: dict, fund_domains: set[str] | None = None) -> tuple[dict | None, str | None]:
+def _without_fund_name(name: str, fund: str | None) -> str | None:
+    """"Kaszek GOintegro" -> "GOintegro" for the fund Kaszek. None when what's left is a sentence
+    ("Y Combinator Make something people want. Fintech": the site's tagline)."""
+    if not fund or not name.casefold().startswith(fund.casefold() + " "):
+        return name
+    rest = name[len(fund):].strip()
+    return None if ". " in rest or len(rest.split()) > 4 else rest
+
+
+def clean_startup(startup: dict, fund_domains: set[str] | None = None,
+                  fund: str | None = None) -> tuple[dict | None, str | None]:
     """(the record to merge or None to drop it, a note on what changed).
 
     A tag or badge read as the name ("AI & SaaS", "Exited") is replaced by a
@@ -115,19 +129,34 @@ def clean_startup(startup: dict, fund_domains: set[str] | None = None) -> tuple[
     A link to the fund's own site (FUND_DOMAINS) doesn't count as the startup's.
     A name that may be real ("Mobility", or a name equal to its own sector) is
     kept when its website spells it ("Kilimo" at kilimoapp.com), and kept with
-    a note when there is no website to tell; only a sure tag is dropped.
+    a note when there is no website to tell; only a sure tag is dropped. A label
+    with a country ("SaaS, Argentina") also gives the sector and country. FUND is
+    the fund's name, removed from the front of a name ("Kaszek GOintegro").
     """
     startup = {**startup, "country": normalize_country(startup.get("country"))}
     name = startup["name"]
-    if not looks_like_category(name, startup.get("sector")):
-        return startup, None
+    if what := not_a_company(name):
+        return None, f"dropped '{name}': {what}, not a company name"
+    plain = _without_fund_name(name, fund)
+    if plain is None:
+        return None, f"dropped '{name}': the fund's own tagline, not a company name"
+    if re.search(r"\.(com|net|org)(\.\w\w)?$", plain, re.I):   # .ai or .io can be part of a brand ("Logan.ai")
+        plain = without_domain_ending(plain)
+    note = f"renamed '{name}' to '{plain}'" if plain != name else None
+    startup, name = {**startup, "name": plain}, plain
+    label = tag_and_country(name)                # "SaaS, Argentina": the card's label
+    if label:
+        startup = {**startup, "sector": startup.get("sector") or label[0],
+                   "country": startup["country"] or normalize_country(label[1])}
+    elif not looks_like_category(name, startup.get("sector")):
+        return startup, note
     better = name_from_website(startup.get("website"), fund_domains)
-    if website_confirms_name(name, better):
-        return startup, None                     # the website is named after it: a real name
+    if not label and website_confirms_name(name, better):
+        return startup, note                     # the website is named after it: a real name
     if not better:
         why = ("its only link is the fund's own site or a shared platform" if startup.get("website")
                else "no website")
-        if not surely_category(name):
+        if not label and not surely_category(name):
             return startup, f"kept '{name}': may be a sector tag or a real name, and {why} to tell"
         return None, f"dropped '{name}': a category, not a company name, and {why}"
     description = startup.get("description")
@@ -143,7 +172,7 @@ def clean_portfolio(path: Path, data: dict) -> tuple[list[dict], list[str]]:
     for raw in data.get("startups", []):
         if not raw.get("name"):
             continue
-        startup, note = clean_startup(raw, domains)
+        startup, note = clean_startup(raw, domains, data.get("fund_name"))
         if note:
             notes.append(note)
         if startup is not None:

@@ -333,6 +333,8 @@ python scripts/load_db.py output/a.json    # specific files; --all for every fil
 
 Every record becomes a **mention**, stored as found. A mention is linked to an actor only when that's certain (the same website domain). If only the name is the same, the mention waits for resolution. If nothing similar exists, a new actor is created. Each startup gets an `Investment` relationship from its fund. Loading the same file twice adds nothing.
 
+After entity resolution, `python scripts/load_enrichment.py` stores the newest `output/startups_enriched_*.json` on the actors, under `actors.metadata -> 'enrichment'` (`--dry-run` changes nothing). A summary or founding year fills `description` and `year_created` only when those are empty.
+
 ### 3. Resolve entities: `scripts/resolve_entities.py`
 
 ```bash

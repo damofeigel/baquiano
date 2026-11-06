@@ -9,12 +9,16 @@ Usage:
     python scripts/enrich_startups.py --names "Puna Bio" Beeflow
 
 For each startup: read its homepage and one about/contact page, look for
-Argentina signals (.ar domain, +54 phone, Argentine cities), then make one
-structured LLM call: country, year founded, summary, deep tech yes/no and a
-technology area from scripts/taxonomy.json (edit it to change the categories).
+Argentina signals (.ar domain, +54 phone, Argentine cities, a fund that is an
+Argentine programme), then make one structured LLM call: country, year founded,
+summary, deep tech yes/no and a technology area from scripts/taxonomy.json (edit
+it to change the categories). A startup with no website to read and no fund text
+isn't sent to the model: its deep tech answer stays unknown (null).
 
-The model must quote the page text behind the country and the founding year;
-a quote that isn't on the page is discarded. By default only startups whose
+The model must quote the page text behind the country and the founding year; a
+quote that isn't on the page is discarded, and so is one that doesn't show where
+the company is (a lone city name, a job title, a press outlet). A country that
+a fund states or a strong signal goes in country_likely. By default only startups whose
 country is Argentina or unknown are processed. Progress is saved after every
 startup and a rerun skips the ones already done.
 
@@ -56,6 +60,7 @@ ABOUT_LINK = re.compile(
     re.IGNORECASE,
 )
 
+PROGRAMME_SIGNAL = "Argentine programme"
 ARGENTINA_SIGNALS = {
     "phone +54": re.compile(r"\+\s?54[\s\d-]{6,}"),
     "mentions Argentina": re.compile(r"\bargentin[ae]\b|\bargentina\b", re.IGNORECASE),
@@ -101,13 +106,26 @@ def _is_ar(url: str | None) -> bool:
     return (website_domain(url) or "").endswith(".ar")      # also "empresa.com.ar", with no https://
 
 
-def argentina_signals(website: str | None, texts: list[str], landed: str | None = None) -> list[str]:
+# Argentine programmes whose own site isn't under .ar (the rest are recognized by their domain)
+ARGENTINE_PROGRAMME_SITES = {"sf500.vc"}
+
+
+def _is_argentine_programme(url: str | None) -> bool:
+    domain = website_domain(url) or ""
+    return domain.endswith(".ar") or domain in ARGENTINE_PROGRAMME_SITES
+
+
+def argentina_signals(website: str | None, texts: list[str], landed: str | None = None,
+                      sources: list[str] | None = None) -> list[str]:
     """Signals of an Argentine company. ".ar domain" counts for the recorded website or for
-    LANDED, the page the browser ended on (neworgans.com redirecting to neworgans.com.ar)."""
+    LANDED, the page the browser ended on (neworgans.com redirecting to neworgans.com.ar).
+    SOURCES are the portfolio pages that list it: corlab.cordoba.gob.ar lists Córdoba's startups."""
     website = (website or "").strip()
     signals = []
     if _is_ar(website) or _is_ar(landed):
         signals.append(".ar domain")
+    if any(_is_argentine_programme(source) for source in sources or []):
+        signals.append(PROGRAMME_SIGNAL)
     joined = "\n".join(texts)
     for label, pattern in ARGENTINA_SIGNALS.items():
         if pattern.search(joined):
@@ -145,7 +163,8 @@ def fund_labels(startup: dict) -> list[str]:
 
 def build_messages(startup: dict, pages: list[dict[str, str]], signals: list[str],
                    taxonomy: dict[str, Any]) -> list[dict[str, str]]:
-    areas = "\n".join(f"- {key}: {a['label']}" for key, a in taxonomy["areas"].items())
+    areas = "\n".join(f"- {key}: {a['label']} ({'deep tech' if a['deep_tech'] else 'not deep tech'})"
+                      for key, a in taxonomy["areas"].items())
     fund_texts = "\n".join(f"- {d['fund']}: {d['text']}" for d in startup.get("descriptions", []))
     labels = ", ".join(fund_labels(startup)) or "none"
     page_texts = "\n\n".join(f"### {p['url']}\n{p['text']}" for p in pages) or "(website not available)"
@@ -160,11 +179,14 @@ Technology areas (tech_area must be one of these keys):
 Rules:
 - country: where the company is headquartered or was founded, only if a text states it.
   country_evidence: copy the exact words from the texts that show it (an address,
-  "based in ...", "Argentine company"). If no text states it, both are null.
+  "based in ...", "Argentine company"). If no text states it, both are null. A city name
+  alone, a job title ("Head of Sales Argentina"), a press outlet ("Forbes Argentina") or a
+  market it sells in doesn't state it.
 - year_founded: only if a text states it ("founded in 2019", "since 2019");
   year_evidence: the exact words. Otherwise both null. A copyright year is not a founding year.
 - summary: one sentence on what the company does.
-- deep_tech: follow the definition above; deep_tech_reason: one sentence why.
+- deep_tech: follow the definition above, and it must agree with the tech_area you pick;
+  deep_tech_reason: one sentence why.
 - confidence: low when the texts say little about the company."""
     user = f"""Startup: {startup['name']}
 Website: {startup.get('website') or 'none'}
@@ -200,18 +222,77 @@ def verify(result: dict[str, Any], texts: list[str], taxonomy: dict[str, Any]) -
     return result
 
 
+# Evidence that a place is mentioned, not that the company is there
+_AMBIGUOUS_PLACE = re.compile(
+    r"^\W*(c[oó]rdoba|rosario|mendoza|la plata|santa fe|salta|tucum[aá]n|caba|neuqu[eé]n|bariloche|"
+    r"mar del plata|bah[ií]a blanca)\W*$", re.IGNORECASE,
+)
+_JOB_TITLE = re.compile(r"\b(head of|manager|director|lead|representative|sales|ventas|gerente)\b", re.IGNORECASE)
+_PRESS_OUTLET = re.compile(r"\b(forbes|la naci[oó]n|clar[ií]n|infobae|bloomberg|techcrunch)\b", re.IGNORECASE)
+
+
+def weak_country_evidence(evidence: str | None) -> str | None:
+    """Why a quote doesn't show where a company is, or None. A lone "Córdoba" may be in Spain,
+    and "Head of Sales Argentina" or "Forbes Argentina" only show a market or a press mention."""
+    text = evidence or ""
+    if _AMBIGUOUS_PLACE.match(text):
+        return "a city name alone"
+    if _JOB_TITLE.search(text):
+        return "a job title"
+    if _PRESS_OUTLET.search(text):
+        return "a press outlet"
+    return None
+
+
+def recheck_country(enrichment: dict[str, Any]) -> dict[str, Any]:
+    """Drop a country whose evidence doesn't show where the company is. No page is needed,
+    so results stored before this rule are brought up to date too."""
+    why = weak_country_evidence(enrichment.get("country_evidence")) if enrichment.get("country") else None
+    if why:
+        enrichment["checks"] = [*enrichment.get("checks", []), f"country dropped: the evidence is only {why}"]
+        enrichment["country"] = enrichment["country_evidence"] = None
+    return enrichment
+
+
 # Signals strong enough to say "likely Argentine" when no text states the country
-STRONG_SIGNALS = {".ar domain", "phone +54"}
+STRONG_SIGNALS = {".ar domain", "phone +54", PROGRAMME_SIGNAL}
 
 
-def add_hints(enrichment: dict[str, Any]) -> dict[str, Any]:
-    """One spelling per country, and country_likely = "Argentina" when the model found no
-    stated country but the site has a .ar domain or a +54 phone number. country itself
-    stays as checked against the pages."""
+def add_hints(enrichment: dict[str, Any], fund_country: str | None = None) -> dict[str, Any]:
+    """One spelling per country, and country_likely: the stated country, else the one a fund
+    gives (FUND_COUNTRY), else "Argentina" when the site has a .ar domain or a +54 phone number
+    or an Argentine programme lists it. country itself stays as checked against the pages."""
     enrichment["country"] = normalize_country(enrichment.get("country"))
     strong = STRONG_SIGNALS & set(enrichment.get("argentina_signals") or [])
-    enrichment["country_likely"] = enrichment["country"] or ("Argentina" if strong else None)
+    enrichment["country_likely"] = (enrichment["country"] or normalize_country(fund_country)
+                                    or ("Argentina" if strong else None))
     return enrichment
+
+
+def no_evidence(status: str, signals: list[str]) -> dict[str, Any]:
+    """The result for a startup with nothing to read: unknown, which is not "not deep tech"."""
+    return {
+        "country": None, "country_evidence": None, "year_founded": None, "year_evidence": None,
+        "summary": None, "deep_tech": None, "deep_tech_reason": "Nothing to read: no website and no fund text.",
+        "tech_area": "unknown", "confidence": "low", "checks": [], "argentina_signals": signals,
+        "website_status": status, "pages_read": [],
+        "enriched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def had_nothing_to_read(entry: dict[str, Any]) -> bool:
+    enrichment = entry["enrichment"]
+    return bool(enrichment.get("website_status")) and not enrichment.get("pages_read") and not entry.get("descriptions")
+
+
+def update_stored(entry: dict[str, Any]) -> None:
+    """Apply today's rules to a stored result, no website visit or LLM call needed."""
+    refresh_domain_signal(entry)
+    enrichment = entry["enrichment"]
+    if had_nothing_to_read(entry) and enrichment.get("deep_tech") is not None:
+        entry["enrichment"] = enrichment = no_evidence(enrichment.get("website_status") or "no website",
+                                                        enrichment.get("argentina_signals") or [])
+    add_hints(recheck_country(enrichment), entry.get("country"))
 
 
 def refresh_domain_signal(entry: dict[str, Any]) -> dict[str, Any]:
@@ -220,9 +301,9 @@ def refresh_domain_signal(entry: dict[str, Any]) -> dict[str, Any]:
     website changed since) is brought up to date without visiting the site. The text
     signals stay as found."""
     enrichment = entry["enrichment"]
-    found = [s for s in enrichment.get("argentina_signals") or [] if s != ".ar domain"]
+    found = [s for s in enrichment.get("argentina_signals") or [] if s not in (".ar domain", PROGRAMME_SIGNAL)]
     landed = (enrichment.get("pages_read") or [None])[0]
-    enrichment["argentina_signals"] = argentina_signals(entry.get("website"), [], landed) + found
+    enrichment["argentina_signals"] = argentina_signals(entry.get("website"), [], landed, entry.get("sources")) + found
     return entry
 
 
@@ -231,16 +312,19 @@ def enrich_one(startup: dict, browser: Any, classify: Classifier, taxonomy: dict
     fund_texts = [d["text"] for d in startup.get("descriptions", [])]
     texts = [p["text"] for p in pages] + fund_texts
     signals = argentina_signals(startup.get("website"), [p["text"] for p in pages],
-                                pages[0]["url"] if pages else None)      # after any redirect
+                                pages[0]["url"] if pages else None,      # after any redirect
+                                startup.get("sources"))
+    if not any(text.strip() for text in texts):
+        return add_hints(no_evidence(status, signals), startup.get("country"))
     result = classify(build_messages(startup, pages, signals, taxonomy), result_schema(taxonomy))
-    result = verify(result, texts, taxonomy)
+    result = recheck_country(verify(result, texts, taxonomy))
     return add_hints({
         **result,
         "argentina_signals": signals,
         "website_status": status,
         "pages_read": [p["url"] for p in pages],
         "enriched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    })
+    }, startup.get("country"))
 
 
 #  Running over a merged file 
@@ -284,6 +368,8 @@ def reuse_previous(startups: list[dict], files: list[Path], done: dict[str, dict
                 if candidate and not (domain and old_domain and domain != old_domain):
                     found = candidate
                     break
+        if found and startup.get("website") and found["enrichment"].get("website_status") == "no website":
+            found = None                # now there is a website to read, which the old result didn't have
         if found:
             # A full copy per startup: two startups can match one old record
             done[startup["name"]] = {**startup, "enrichment": copy.deepcopy(found["enrichment"])}
@@ -321,7 +407,7 @@ def main() -> None:
         done = {s["name"]: s for s in json.loads(out.read_text(encoding="utf-8"))["startups"] if s.get("enrichment")}
     reused = reuse_previous(merged["startups"], args.previous, done)
     for entry in done.values():
-        add_hints(refresh_domain_signal(entry)["enrichment"])
+        update_stored(entry)
     todo = [s for s in select(merged["startups"], args.all, args.names) if s["name"] not in done]
     if args.limit is not None:
         todo = todo[: args.limit]
@@ -367,8 +453,8 @@ def main() -> None:
                 continue
             done[startup["name"]] = {**startup, "enrichment": enrichment}
             save()
-            print(f"[{i}/{len(todo)}] {startup['name']}: {enrichment.get('country') or '?'}, "
-                  f"{'deep tech' if enrichment.get('deep_tech') else 'not deep tech'} "
+            verdict = {True: "deep tech", False: "not deep tech", None: "unknown"}[enrichment.get("deep_tech")]
+            print(f"[{i}/{len(todo)}] {startup['name']}: {enrichment.get('country') or '?'}, {verdict} "
                   f"({enrichment.get('tech_area')}, {enrichment.get('confidence')})"
                   + (f"  checks: {'; '.join(enrichment['checks'])}" if enrichment["checks"] else ""))
     save()
@@ -386,6 +472,8 @@ def summarize(startups: list[dict]) -> dict[str, Any]:
         "argentina_likely": len(likely),
         "argentina_likely_deep_tech": sum(1 for e in likely if e.get("deep_tech")),
         "deep_tech": sum(1 for e in enriched if e.get("deep_tech")),
+        "deep_tech_unknown": sum(1 for e in enriched if e.get("deep_tech") is None),
+        "deep_tech_contradicts_area": sum(1 for e in enriched if any("in the taxonomy" in c for c in e.get("checks", []))),
         "by_area": dict(Counter(e.get("tech_area") for e in enriched).most_common()),
         "country_unknown": sum(1 for e in enriched if not e.get("country")),
     }

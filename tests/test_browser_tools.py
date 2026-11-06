@@ -343,3 +343,11 @@ def test_close_closes_browser_and_subsequent_calls_return_error(tools_module):
 
     # Closing twice should be harmless.
     browser_tools.close()
+
+
+def test_nested_svg_does_not_crash_page_extraction():
+    from src.core.browser import extract_page_content
+
+    # ravelin.com, kencko.com: removing the outer svg destroyed the inner one, then reading it crashed
+    html = '<html><body><p>Fraud detection</p><svg><svg aria-label="x"><path/></svg></svg></body></html>'
+    assert "Fraud detection" in extract_page_content(html, base_url="https://x.example").plain_text

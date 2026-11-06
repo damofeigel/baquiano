@@ -414,7 +414,9 @@ def merge_actors(conn: psycopg.Connection, keep: int, drop: int) -> None:
     _add_alias(conn, keep, name, None)
     conn.execute(
         """UPDATE actors k SET website = coalesce(k.website, d.website),
-                               description = coalesce(k.description, d.description), updated_at = NOW()
+                               description = coalesce(k.description, d.description),
+                               metadata = coalesce(d.metadata, '{}'::jsonb) || coalesce(k.metadata, '{}'::jsonb),
+                               updated_at = NOW()
            FROM actors d WHERE k.id = %(keep)s AND d.id = %(drop)s""", params)
     conn.execute("UPDATE actors SET merged_into_id = %(keep)s WHERE merged_into_id = %(drop)s", params)
     conn.execute(

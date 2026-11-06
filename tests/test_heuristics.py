@@ -266,6 +266,10 @@ class FakeBrowser:
         self.page.url = url if url in self.pages else url.rstrip("/") + "/"
         if self.page.url not in self.pages:
             raise RuntimeError(f"net::ERR_NAME_NOT_RESOLVED at {url}")
+        return type("Content", (), {"links": []})()
+
+    def click_next_page(self):
+        return False
 
     def get_page_content(self):
         return self.pages[self.page.url]
@@ -374,3 +378,168 @@ def test_status_badge_is_not_a_name():
 ])
 def test_country_from_tags(tags, country):
     assert country_from_tags(tags) == country
+
+
+def _company_cards(names):
+    return "".join(f'<div class="c"><img alt="{n}"><a href="https://{n.lower()}.example">{n}</a></div>' for n in names)
+
+
+FOUR = ["Agribody", "Holganix", "Hydrosat", "Lepidext"]
+
+
+def test_a_filter_panel_is_not_a_grid():
+    # 500.co: 297 options like "Lebanon 12" beat 10 real cards per page
+    filters = "".join(
+        f'<div class="row"><div><button role="checkbox"></button><label>{f}</label></div><div>{n}</div></div>'
+        for n, f in enumerate(["Lebanon", "Robotics", "Series A", "GA 25", "Kuwait", "Legal", "Mobile", "Seed"] * 3)
+    )
+    page = _page(f'<div class="panel">{filters}</div><div class="g">{_company_cards(FOUR)}</div>')
+    assert [c.name for c in extract_companies(page, BASE)] == FOUR
+
+
+def test_facet_rows_go_but_a_grid_inside_a_facet_template_stays():
+    # sosv.com: "facetwp-checkbox" options, and the real grid is "facetwp-template"
+    facets = "".join(f'<div class="facetwp-checkbox"><span>HAX {n:02}</span><span>{n}</span></div>' for n in range(20))
+    grid = "".join(
+        f'<div class="item"><h3><a href="https://fund.example/company/{n.lower()}/">{n}</a></h3>'
+        f'<p>Long enough text about what {n} does for its customers.</p></div>' for n in FOUR)
+    page = _page(f'<div>{facets}</div><div class="facetwp-template">{grid}</div>')
+    assert [c.name for c in extract_companies(page, BASE)] == FOUR
+
+
+def test_filter_chips_are_not_a_grid():
+    # cites-gss.com: <a href="#" data-term-c1="pharma-en">Pharma</a>
+    chips = "".join(f'<a href="#" data-term-c1="{t}">{t}</a>' for t in ["Pharma", "Agtech", "AI", "Food", "Med", "All"])
+    page = _page(f'<div>{chips}</div><div class="g">{_company_cards(FOUR)}</div>')
+    assert [c.name for c in extract_companies(page, BASE)] == FOUR
+
+
+def test_a_list_of_counts_is_not_a_grid():
+    rows = "".join(f'<div class="r"><span>{n}</span></div>' for n in range(1, 30))
+    assert extract_companies(_page(f'<div class="g">{rows}</div>'), BASE) == []
+
+
+def test_a_search_form_around_the_grid_keeps_the_grid():
+    # antler.co wraps its directory in one form; a contact form still goes
+    page = _page(f'<form><input type="search"><div class="g">{_company_cards(FOUR)}</div></form>')
+    assert [c.name for c in extract_companies(page, BASE)] == FOUR
+    assert extract_companies(_page('<form><input><div class="g"><div>a</div><div>b</div></div></form>'), BASE) == []
+
+
+def test_tag_cards_are_named_from_their_links_before_looking_for_duplicates():
+    # 17sigma.com: the label is all a card says, and two companies can share it
+    cards = "".join(
+        f'<div class="c"><a href="https://{d}/"><img alt=""><p>{label}</p></a></div>'
+        for d, label in [("mentatech.io", "SaaS, Argentina"), ("buk.cl", "SaaS, Chile"), ("bhub.ai", "SaaS, Brazil"),
+                         ("hedix.com.br", "SaaS, Brazil"), ("credito.aro.ia.br", "FinTech & AI, Brazil")])
+    by_name = {c.name: c for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)}
+    assert set(by_name) == {"Mentatech", "Buk", "Bhub", "Hedix", "Aro"}
+    assert (by_name["Mentatech"].country, by_name["Mentatech"].sector) == ("Argentina", "SaaS")
+
+
+def test_parts_of_a_card_do_not_count_as_cards():
+    # 500.co: each company is a logo row and a text block, with a legal name in the alt
+    cards = "".join(
+        f'<div class="card"><div class="top"><img alt="{n} Holdings, Inc."><a href="https://{n.lower()}.example">{n}</a></div>'
+        f'<div class="text"><span>{n.upper()}</span><span>{"Long text about the company. " * 4}</span></div></div>'
+        for n in FOUR)
+    assert [c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)] == FOUR
+
+
+def test_long_cards_with_their_own_links_are_still_cards():
+    cards = "".join(f'<div class="c"><h3>{n}</h3><a href="https://{n.lower()}.example">site</a><p>{"Text. " * 200}</p></div>'
+                    for n in FOUR)
+    assert [c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)] == FOUR
+
+
+def test_card_links_to_the_funds_own_company_page():
+    cards = "".join(f'<div class="c"><img alt="{n}"><a href="{BASE}company/{n.lower()}/">More</a></div>' for n in FOUR)
+    companies = extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)
+    assert companies[0].website is None and companies[0].profile_url == f"{BASE}company/agribody/"
+
+
+def test_a_cards_location_gives_its_country():
+    cards = "".join(
+        f'<div class="c"><h3>{n}</h3><img alt=""><div>Locations: {loc}</div></div>'
+        for n, loc in zip(FOUR, ["United States", "Canada", "Boston, MA", "Argentina"]))
+    by_name = {c.name: c.country for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)}
+    assert by_name == {"Agribody": "United States", "Holganix": "Canada", "Hydrosat": None, "Lepidext": "Argentina"}
+
+
+@pytest.mark.parametrize("caption", ["peec ai team photo", "Two founders posing for photo in Europe", "Reebelo founders"])
+def test_photo_captions_are_not_names(caption):
+    cards = _company_cards(FOUR) + f'<div class="c"><img alt="{caption}"></div>'
+    assert [c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)] == FOUR
+
+
+def test_a_heading_that_describes_the_company_yields_to_the_link():
+    cards = "".join(
+        f'<div class="c"><a href="{BASE}portfolio/{slug}/"><img alt=""><h3>{text}</h3></a></div>'
+        for slug, text in [("ab-astra-2", "Muography for mapping"), ("clover-en", "New generation of mechanical valves"),
+                           ("radbio-2", "Radiation for cancer treatment now"), ("ardan-en", "New immunotherapy for cancer care")])
+    assert {c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)} == {
+        "Muography for mapping", "Clover", "Radbio", "Ardan"}    # 3 words: may be a real name
+
+
+def test_prepass_stops_when_pages_repeat_and_clicks_a_next_control():
+    from src.custom_agents.portfolio_agent.prepass import _read_listing
+
+    class Pager(FakeBrowser):
+        clicks = 0
+
+        def click_next_page(self):
+            self.clicks += 1
+            self.page.url = {1: "https://f.example/2", 2: "https://f.example/3"}.get(self.clicks, self.page.url)
+            return True
+
+    first, second = _company_cards(FOUR), _company_cards(["Zeta", "Yotta", "Xenon", "Wave"])
+    browser = Pager({
+        "https://f.example/1": _page(f'<div class="g">{first}</div>'),
+        "https://f.example/2": _page(f'<div class="g">{second}</div>'),
+        "https://f.example/3": _page(f'<div class="g">{second}</div>'),   # the same again: stop
+    })
+    browser.go_to("https://f.example/1")
+    companies = _read_listing(browser, "https://f.example/1", browser.get_page_content)
+    assert [c.name for c in companies] == FOUR + ["Zeta", "Yotta", "Xenon", "Wave"]
+    assert browser.clicks == 2
+
+
+def test_websites_from_the_funds_company_pages():
+    from src.custom_agents.portfolio_agent.models import StartupInfo
+    from src.custom_agents.portfolio_agent.prepass import fill_websites_from_profiles, website_from_profile
+
+    profile = "https://sosv.com/company/puna-bio/"
+    links = [{"href": "https://sosvdeeptech.com/"}, {"href": "https://www.linkedin.com/company/puna"},
+             {"href": "https://agfundernews.com/puna-bio-news"}, {"href": "https://puna.bio"}]
+    assert website_from_profile(links, "Puna Bio", profile) == "https://puna.bio"
+    assert website_from_profile(links[:3], "Puna Bio", profile) is None
+
+    class Browser:
+        def go_to(self, url):
+            if "broken" in url:
+                raise RuntimeError("timeout")
+            return type("Content", (), {"links": links})()
+
+    companies = [StartupInfo(name="Puna Bio", profile_url=profile),
+                 StartupInfo(name="Broken", profile_url="https://sosv.com/company/broken/"),
+                 StartupInfo(name="Has Site", website="https://hassite.example", profile_url=profile),
+                 StartupInfo(name="No Page")]
+    assert fill_websites_from_profiles(Browser(), companies, []) == 1
+    assert [c.website for c in companies] == ["https://puna.bio", None, "https://hassite.example", None]
+
+
+def test_visiting_company_pages_stops_when_the_site_keeps_failing():
+    from src.custom_agents.portfolio_agent.models import StartupInfo
+    from src.custom_agents.portfolio_agent import prepass
+
+    class Blocked:
+        visits = 0
+
+        def go_to(self, url):
+            self.visits += 1
+            raise RuntimeError("blocked")
+
+    browser, notes = Blocked(), []
+    companies = [StartupInfo(name=f"C{n}", profile_url=f"https://f.example/c{n}") for n in range(40)]
+    assert prepass.fill_websites_from_profiles(browser, companies, notes) == 0
+    assert browser.visits == prepass.MAX_PROFILE_FAILURES and "failures in a row" in notes[0]

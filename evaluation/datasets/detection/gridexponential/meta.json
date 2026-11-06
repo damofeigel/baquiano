@@ -1,0 +1,11 @@
+{
+  "id": "gridexponential",
+  "url": "https://www.gridexponential.com/portfolio",
+  "why": "Argentine deep tech, a clean grid",
+  "pages": {
+    "gridexponential.com/portfolio": "portfolio.html",
+    "gridexponential.com": "home.html"
+  },
+  "reviewed": false,
+  "saved_at": "2026-11-06T20:57:12+00:00"
+}

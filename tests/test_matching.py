@@ -5,6 +5,9 @@ from __future__ import annotations
 import pytest
 
 from src.core.matching import (
+    not_a_company,
+    same_company_name,
+    tag_and_country,
     company_domain, is_shared_site, website_domain, looks_like_category, name_from_website, normalize_country,
     registrable_domain, sister_of, surely_category, web_url, website_confirms_name,
 )
@@ -186,3 +189,37 @@ def test_values_that_are_no_website_never_share_a_domain():
         None, "puna.bio", "glaia.com"}
     assert company_domain("hola@gmail.com") is None and company_domain("https://gmail.com") is None
     assert name_from_website("https://www.gmail.com") is None
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("SaaS, Argentina", ("SaaS", "Argentina")),
+    ("AI & SaaS, Argentina", ("AI & SaaS", "Argentina")),
+    ("Exit FinTech, Uruguay", ("Exit FinTech", "Uruguay")),
+    ("Energy, Brazil", ("Energy", "Brazil")),
+    ("Acme, Argentina", None),          # a name, not a tag
+    ("SaaS, Atlantis", None),
+    ("SaaS", None),
+])
+def test_tag_and_country(name, expected):
+    assert tag_and_country(name) == expected
+
+
+@pytest.mark.parametrize("name, is_junk", [
+    ("peec ai team photo", True), ("Taqtic founders on Sydney street", True), ("Reebelo founders", True),
+    ("30 y 31 de julio de 2026 · Córdoba, Argentina", True), ("Portfolio: Po Bronson", True),
+    ("Founders Factory", False), ("Photon Labs", False), ("Julio", False), ("May Mobility", False), ("Acme", False),
+])
+def test_not_a_company(name, is_junk):
+    assert bool(not_a_company(name)) is is_junk
+
+
+@pytest.mark.parametrize("a, b, same", [
+    ("Nuvemshop", "Nuvemshop.com.br", True), ("Exactly", "Exactly.finance", True), ("Satellogic", "Satellogic.com", True),
+    ("Mural", "Mural.co", True), ("Mural", "Murano.co", False),
+])
+def test_domain_endings_do_not_split_a_company(a, b, same):
+    assert same_company_name(a, b) is same
+
+
+def test_name_from_a_brazilian_ai_domain():
+    assert name_from_website("https://credito.aro.ia.br/") == "Aro"

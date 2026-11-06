@@ -286,3 +286,33 @@ def test_tags_linking_to_the_funds_own_site_do_not_become_one_fake_startup(tmp_p
     assert [s["name"] for s in merged] == ["Lioraenergia"]       # not "17sigma", not "App"
     assert sum(note.startswith("17 Sigma: dropped") for note in notes) == 2
     assert all("the fund's own site" in note for note in notes if "dropped" in note)
+
+
+@pytest.mark.parametrize("name, website, fund, kept_name", [
+    ("SaaS, Argentina", "https://mentatech.io/", None, "Mentatech"),
+    ("Kaszek GOintegro", None, "Kaszek", "GOintegro"),
+    ("Nuvemshop.com.br", "https://nuvemshop.com.br", None, "Nuvemshop"),
+    ("Logan.ai", "https://logan.ai", None, "Logan.ai"),      # part of the brand
+    ("Kaszek", None, "Kaszek", "Kaszek"),                    # the whole name is not a prefix
+    ("Acme, Argentina", None, None, "Acme, Argentina"),
+])
+def test_names_are_cleaned(name, website, fund, kept_name):
+    cleaned, _ = mp.clean_startup({"name": name, "website": website}, None, fund)
+    assert cleaned["name"] == kept_name
+
+
+def test_a_tag_with_a_country_gives_the_sector_and_country():
+    cleaned, note = mp.clean_startup({"name": "SaaS, Argentina", "website": "https://mentatech.io/"})
+    assert (cleaned["country"], cleaned["sector"], cleaned["renamed_from"]) == ("Argentina", "SaaS", "SaaS, Argentina")
+    assert "renamed" in note
+
+
+@pytest.mark.parametrize("name, fund", [
+    ("SaaS, Argentina", None), ("Energy, Brazil", None),     # a label with no website identifies nobody
+    ("Pharma", None), ("Drug Discovery", None), ("Med devices", None), ("Mining and Energy", None),
+    ("peec ai team photo", None), ("30 y 31 de julio de 2026 · Córdoba, Argentina", None),
+    ("Y Combinator Make something people want. Fintech", "Y Combinator"),
+])
+def test_records_that_are_no_company_are_dropped(name, fund):
+    cleaned, note = mp.clean_startup({"name": name}, None, fund)
+    assert cleaned is None and note.startswith("dropped")

@@ -30,17 +30,25 @@ def check_llm(client: Any, model: str) -> str | None:
 
 
 def make_llm_classifier(client: Any, model: str, name: str = "startup_enrichment") -> Classifier:
-    """Structured output via the server's JSON-schema mode, with a plain-JSON fallback."""
+    """Structured output via the server's JSON-schema mode, with a plain-JSON fallback.
+    An empty or cut-off reply is tried again once, a little warmer: at temperature 0 the
+    same request gets the same reply."""
     def classify(messages: list[dict[str, str]], schema: dict[str, Any]) -> dict[str, Any]:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0,
-            max_tokens=config.LLM_MAX_TOKENS,
-            response_format={"type": "json_schema",
-                             "json_schema": {"name": name, "schema": schema, "strict": True}},
-        )
-        return parse_json(response.choices[0].message.content or "")
+        for temperature in (0, 0.3):
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=config.LLM_MAX_TOKENS,
+                response_format={"type": "json_schema",
+                                 "json_schema": {"name": name, "schema": schema, "strict": True}},
+            )
+            try:
+                return parse_json(response.choices[0].message.content or "")
+            except ValueError:          # includes json.JSONDecodeError
+                if temperature:
+                    raise
+        raise AssertionError("unreachable")
     return classify
 
 

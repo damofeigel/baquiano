@@ -1,0 +1,11 @@
+{
+  "id": "nxtp",
+  "url": "https://nxtp.vc/portfolio",
+  "why": "The parser found only navigation",
+  "pages": {
+    "nxtp.vc/portfolio": "portfolio.html",
+    "nxtp.vc": "home.html"
+  },
+  "reviewed": false,
+  "saved_at": "2026-11-06T20:57:30+00:00"
+}
