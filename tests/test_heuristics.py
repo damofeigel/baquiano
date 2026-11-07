@@ -549,3 +549,45 @@ def test_a_tag_card_with_a_short_domain_is_named_from_the_whole_domain():
     cards = "".join(f'<div class="c"><a href="https://{d}/"><img alt=""><p>FinTech, Brazil</p></a></div>'
                     for d in ["ng.cash", "hedix.com.br", "neofin.com.br", "aqmen.ai"])
     assert "Ng.cash" in {c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)}
+
+
+def test_a_logo_card_is_named_from_its_own_address_not_its_first_text():
+    # drapercygnus.vc: a logo, a tag, a description and "discover more"
+    cards = "".join(
+        f'<div class="c"><img alt=""><div>Bio</div><div>What the company does, in a few words.</div>'
+        f'<a href="/startups/{slug}">discover more</a></div>' for slug in ["ayuvant", "ab-astra", "lemon", "splight"])
+    assert [c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)] == [
+        "Ayuvant", "Ab Astra", "Lemon", "Splight"]
+
+
+def test_a_card_with_only_a_website_is_named_from_it_and_never_from_a_social_account():
+    # nxtp.vc: a close button, a logo and links, with no name in the text
+    cards = "".join(
+        f'<div class="c"><a href="#">X - CLOSE</a><a href="https://{d}/es"><img alt=""></a>'
+        f'<a href="https://www.linkedin.com/company/{d.split(".")[0]}-account/"><img alt=""></a><p>Vertical SaaS</p></div>'
+        for d in ["axenya.com", "aloi.tech", "arcusfi.com", "ripio.com"])
+    companies = extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)
+    assert [c.name for c in companies] == ["Axenya", "Aloi", "Arcusfi", "Ripio"]
+    assert companies[0].website == "https://axenya.com/es"
+
+
+def test_a_link_whose_text_is_its_own_address_beats_other_links():
+    # aceleradoralitoral.com.ar: the post's author comes first on each card
+    cards = "".join(
+        f'<article class="c"><a href="{BASE}/author/alejandro/">Alejandro</a><img alt="">'
+        f'<a href="{BASE}/portfolio-items/{name.lower().replace(" ", "-")}/">{name}</a></article>'
+        for name in ["ReForest Latam", "UnTech", "Infira", "Inbioar"])
+    assert [c.name for c in extract_companies(_page(f'<div class="g">{cards}</div>'), BASE)] == [
+        "ReForest Latam", "UnTech", "Infira", "Inbioar"]
+
+
+def test_when_the_portfolio_page_shows_nothing_the_page_linking_to_it_is_read():
+    # kamayventures.com/portfolio asks for an access key; its homepage lists the companies
+    from src.custom_agents.portfolio_agent.prepass import _prepass_sync
+
+    home = _page(f'<a href="/portfolio">Portfolio</a><div class="g">{_company_cards(FOUR)}</div>')
+    browser = FakeBrowser({"https://kamay.example/": home,
+                           "https://kamay.example/portfolio": _page("<p>Enter the access key</p>")})
+    result = _prepass_sync(browser, "https://kamay.example/")
+    assert result.portfolio_url == "https://kamay.example/"
+    assert [c.name for c in result.companies] == FOUR

@@ -62,7 +62,7 @@ browser_config = BrowserConfig()
 
 # Text of buttons that reveal more items in a listing (English and Spanish)
 LOAD_MORE_RE = re.compile(
-    r"\b(load|show|see|view)\s+more\b|\b(ver|cargar|mostrar)\s+m[aá]s\b", re.I
+    r"\b(load|show|see|view)\s+(more|all)\b|\b(ver|cargar|mostrar)\s+(m[aá]s|tod[oa]s)\b", re.I
 )
 NEXT_PAGE_RE = re.compile(r"^\s*(next|siguiente)\s*[›»>]?\s*$", re.I)
 

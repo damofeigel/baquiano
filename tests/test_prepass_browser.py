@@ -94,3 +94,11 @@ def test_no_next_control_or_one_that_changes_nothing(browser):
     assert browser.click_next_page(pause_ms=10) is False
     _set_page(browser, "<p>last page</p><a>Next</a>")
     assert browser.click_next_page(pause_ms=10) is False
+
+
+def test_show_all_counts_as_a_load_button(browser):
+    # kamayventures.com: "Show all 23 companies"
+    _set_page(browser, """<div id="l"><a href="https://a.example">A</a></div>
+        <button onclick="document.getElementById('l').insertAdjacentHTML('beforeend',
+            '<a href=https://b.example>B</a>'); this.remove()">Show all 23 companies</button>""")
+    assert browser.expand_listing(pause_ms=10)["clicks"] == 1

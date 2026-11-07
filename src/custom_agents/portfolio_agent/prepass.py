@@ -142,6 +142,13 @@ def _prepass_sync(
     if portfolio:
         result.portfolio_urls.append(portfolio)
         result.companies.extend(_read_listing(browser, portfolio, read_html, result.notes))
+        if not result.companies and portfolio != page_url:
+            # The portfolio page can show nothing (kamayventures.com/portfolio asks for a key)
+            # while the page that links to it lists the companies
+            browser.go_to(page_url)
+            result.companies.extend(_read_listing(browser, page_url, read_html, result.notes))
+            if result.companies:
+                result.portfolio_urls = [page_url]
     else:
         # No portfolio here: the fund may keep it on regional sites with their
         # own domains

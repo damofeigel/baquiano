@@ -298,7 +298,8 @@ def _sibling_groups(children: list[Tag]) -> dict[tuple[str, str], list[Tag]]:
 
 
 _LINK_LABEL = re.compile(
-    r"^(visit|go to|ir a|visitar|ver sitio|see|read more|learn more|more about|leer m[aá]s|saber m[aá]s)\b",
+    r"^(visit|go to|ir a|visitar|ver sitio|see|read more|learn more|discover|more about|leer m[aá]s|saber m[aá]s|"
+    r"close|cerrar|x\s*[-–]\s*close)\b",
     re.IGNORECASE,
 )
 _CONSENT = re.compile(r"\b(cookies?|consent|consentimiento)\b", re.IGNORECASE)
@@ -326,7 +327,7 @@ def _card_name(card: Tag, base_url: str = "") -> str | None:
     )
     if named and (name := _clean_name(named.get_text(" ", strip=True))):
         # A heading of 4+ words unrelated to the link's slug describes the company (cites-gss.com)
-        slug_name = _name_from_slug(card) if len(name.split()) >= 4 else None
+        slug_name = _name_from_slug(card, base_url) if len(name.split()) >= 4 else None
         if slug_name and not slug_name.isdigit() and dedupe_key(slug_name)[:4] not in dedupe_key(name):
             return slug_name
         return name
@@ -336,26 +337,41 @@ def _card_name(card: Tag, base_url: str = "") -> str | None:
         if (_is_external_company_link(str(a.get("href", "")), base_url)
                 and (name := _clean_name(a.get_text(" ", strip=True)))):
             return name
+    # A link whose text is its own address names the company ("ReForest Latam" -> /reforest-latam/);
+    # other links on the card can be anything, like the post's author (aceleradoralitoral.com.ar)
+    links = [card] if card.name == "a" else card.find_all("a", href=True)
+    for a in links:
+        path = urlparse(str(a.get("href", ""))).path.rstrip("/")
+        name = _clean_name(a.get_text(" ", strip=True))
+        if name and not _NOT_A_PROFILE.search(path) and dedupe_key(name) == dedupe_key(path.rsplit("/", 1)[-1]):
+            return name
     imgs = [card] if card.name == "img" else card.find_all("img")
     for img in imgs:
         alt, _ = _split_alt(str(img.get("alt") or img.get("title") or ""))
         if name := _clean_name(alt):
             return name
-    links = [card] if card.name == "a" else card.find_all("a")
     for a in links:
         for value in (a.get_text(" ", strip=True), a.get("aria-label"), a.get("title")):
             if isinstance(value, str) and (name := _clean_name(value)):
                 return name
+    # Logos with no text: the address names it better than whatever text comes first on the
+    # card, a tag or a description (drapercygnus.vc, nxtp.vc)
+    if (name := _name_from_slug(card, base_url)) and not name.isdigit():
+        return name
+    if (website := _card_website(card, base_url)) and (name := name_from_website(website)):
+        return name
     for text in card.stripped_strings:
         if name := _clean_name(text):
             return name
-    return _name_from_slug(card)
+    return None
 
 
+# Pages about a post's author or topic, not about the company on the card
+_NOT_A_PROFILE = re.compile(r"/(author|authors|autor|tag|tags|category|categories|categoria)/", re.I)
 _SLUG_SKIP = {"portfolio", "portafolio", "companies", "empresas", "startups", "about", "contact", "index"}
 
 
-def _name_from_slug(card: Tag) -> str | None:
+def _name_from_slug(card: Tag, base_url: str = "") -> str | None:
     """Last resort for cards with no name text: the detail link's slug.
 
     theyieldlab.eu cards are a logo whose alt is a description plus a "Read
@@ -365,7 +381,10 @@ def _name_from_slug(card: Tag) -> str | None:
     """
     links = [card] if card.name == "a" else card.find_all("a", href=True)
     for a in links:
-        segments = [seg for seg in urlparse(str(a.get("href", ""))).path.split("/") if seg]
+        href = urljoin(base_url, str(a.get("href", "")))
+        if base_url and not _same_site(href, base_url):
+            continue                    # linkedin.com/company/useavra names an account, not the card
+        segments = [seg for seg in urlparse(href).path.split("/") if seg]
         if not segments:
             continue
         slug = re.sub(r"-(\d+|en|es|pt)$", "", segments[-1].lower())   # "ab-astra-2", "clover-en"
