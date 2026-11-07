@@ -305,3 +305,11 @@ def test_a_company_counts_by_its_website_when_the_names_differ():
 def test_the_funds_name_in_front_of_a_name_does_not_count():
     gold = _gold(companies={"GOintegro": None}, fund_name="Kaszek")
     assert score_detection([{"name": "Kaszek GOintegro"}], gold)["correct"] == 1
+
+
+def test_an_undecided_row_counts_by_website_too(tmp_path):
+    (tmp_path / "meta.json").write_text(json.dumps({"reviewed": False}))
+    (tmp_path / "gold.csv").write_text("keep,name,website,found_by,note\n?,Pomelo.la,https://pomelo.la/,,\n")
+    gold = common.load_gold(tmp_path)
+    score = score_detection([{"name": "Pomelo", "website": "https://www.pomelo.la"}, {"name": "Other"}], gold)
+    assert (score["undecided"], score["wrong"]) == (1, 1)

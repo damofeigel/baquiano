@@ -143,6 +143,7 @@ class Gold:
     companies: dict[str, str | None] = field(default_factory=dict)    # name -> website
     not_companies: set[str] = field(default_factory=set)
     undecided: set[str] = field(default_factory=set)
+    undecided_sites: set[str] = field(default_factory=set)    # their domains: a "?" counts by website too
 
 
 def load_gold(fund_dir: Path) -> Gold:
@@ -157,6 +158,8 @@ def load_gold(fund_dir: Path) -> Gold:
                 gold.not_companies.add(row["name"])
             else:
                 gold.undecided.add(row["name"])
+                if domain := company_domain(row.get("website") or None):
+                    gold.undecided_sites.add(domain)
     return gold
 
 
@@ -192,7 +195,7 @@ def score_detection(found: list[dict[str, Any]], gold: Gold) -> dict[str, Any]:
                 sites_checked += 1
                 sites_right += website_domain(company.get("website")) == website_domain(gold.companies[match])
             correct.add(match)
-        elif _find(name, gold.undecided):
+        elif _find(name, gold.undecided) or company_domain(company.get("website")) in gold.undecided_sites:
             undecided += 1
         else:
             wrong.append(name)
